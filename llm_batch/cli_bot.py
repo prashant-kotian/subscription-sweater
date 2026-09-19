@@ -48,7 +48,7 @@ def _cli_spec(site: str) -> dict:
                      "Google account — free tier, no API key"),
             "settings": "~/.gemini/settings.json",
             "mcp_tool": "gemini mcp add <name> <command>",
-            "model_hint": "e.g. gemini-2.5-pro, gemini-2.5-flash",
+            "model_hint": "e.g. gemini-3.1-pro-preview, gemini-3-flash-preview — empty = client Auto",
         }
     if site == "qwen":
         return {
@@ -59,7 +59,7 @@ def _cli_spec(site: str) -> dict:
                      "Qwen account — free tier, no API key"),
             "settings": "~/.qwen/settings.json",
             "mcp_tool": "qwen mcp add <name> <command>",
-            "model_hint": "e.g. qwen3-coder, qwen3-max",
+            "model_hint": "e.g. qwen3-coder-next, qwen3-max — empty = client default",
         }
     raise ToolError(
         f"Terminal mode supports: gemini, qwen (their official CLI clients are "

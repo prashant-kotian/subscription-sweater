@@ -162,6 +162,14 @@ and an explicit **instruction line** appended to the prompt — so "never use we
 search" is honoured in *every* client, and the log prints the resolved decision
 per prompt: `tools: web=off  mcp=ON(github)  model=GPT-5`.
 
+**Known gap: ChatGPT + *local* MCP.** ChatGPT's web MCP connectors only accept
+**public HTTPS endpoints** — attaching your own local stdio server would need
+OpenAI's separate "Secure MCP Tunnel" product (and there is no ChatGPT CLI
+equivalent to bridge through, unlike Gemini/Qwen). So a purely-local MCP
+server runs here on **Claude desktop mode** and **Gemini/Qwen terminal mode**;
+for ChatGPT, tool policy is enforced with the Web toggle (where readable) plus
+the instruction line — which is everything that client exposes.
+
 ## Reliability details
 
 - Answer finished = **text stopped changing** (6 s stable, configurable) —

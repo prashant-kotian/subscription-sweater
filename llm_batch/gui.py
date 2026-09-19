@@ -192,14 +192,14 @@ class App:
         hints = {
             "chatgpt": "e.g. GPT-5, GPT-4o, o3 — empty = app default",
             "claude": "e.g. Opus, Sonnet, Haiku — empty = app default",
-            "gemini": "e.g. Gemini 2.5 Pro — empty = app default",
+            "gemini": "e.g. Gemini 3.1 Pro, Gemini 3 Flash — empty = app default",
             "qwen": "e.g. Qwen3-Max, Qwen3 — empty = app default",
             "custom": "empty = app default",
         }
         if self._mode_key() == "terminal":
             hints = {
-                "gemini": "e.g. gemini-2.5-pro, gemini-2.5-flash — empty = client default",
-                "qwen": "e.g. qwen3-coder, qwen3-max — empty = client default",
+                "gemini": "e.g. gemini-3.1-pro-preview, gemini-3-flash-preview — empty = client Auto",
+                "qwen": "e.g. qwen3-coder-next, qwen3-max — empty = client default",
             }
         self.lbl_model_hint.config(text=hints.get(self._site_key(), ""))
 

@@ -27,6 +27,21 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 ### Changed
 - `mcp_config.py` generalised: one merge engine for Claude desktop + Gemini
   CLI + Qwen Code.
+- Terminal/browser model hints updated to the current line-ups
+  (`gemini-3.1-pro-preview`, `gemini-3-flash-preview`, `qwen3-coder-next`, …).
+
+### Fixed (reported by review, commit `cc95acf`)
+- Windows cp1252 console: `UnicodeEncodeError` on em-dash/checkmark output in
+  `main.py` (Ctrl+C handler, web-UI startup) and `selftest.py`'s success
+  banner — stdout/stderr now forced to UTF-8 (`errors="replace"`) at both
+  entry points.
+- `mcp_config.cli_settings_path()` returned a mixed-separator path on Windows
+  (`~` → backslash home, rest of the literal left as `/`) — wrapped in
+  `os.path.normpath()`.
+
+### Documented
+- Known gap: ChatGPT + local MCP (web connectors accept public HTTPS only;
+  no ChatGPT CLI to bridge through — see README "Tool control").
 
 ## [1.0.0] — 2026-09-19
 
