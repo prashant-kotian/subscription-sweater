@@ -1,0 +1,361 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Subscription Sweater — no API keys. No extra bills.</title>
+<style>
+  :root { --bg:#0f1218; --card:#171c26; --line:#262d3b; --text:#e8ecf3; --dim:#9aa4b5;
+          --acc:#4f8cff; --ok:#39c07f; --warn:#e5b567; --err:#e5695e; }
+  * { box-sizing:border-box }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font:14px/1.45 system-ui, "Segoe UI", Roboto, sans-serif; }
+  header { display:flex; align-items:center; gap:12px; padding:14px 20px;
+           border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  header h1 { font-size:17px; margin:0; }
+  header .sub { color:var(--dim); font-size:12px; }
+  #statusPill { margin-left:auto; padding:4px 12px; border-radius:99px; font-size:12px;
+                background:#232a38; color:var(--dim); max-width:46ch;
+                overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #statusPill.running { background:#173254; color:var(--acc); }
+  #statusPill.done { background:#14352a; color:var(--ok); }
+  #statusPill.error { background:#3a1d1a; color:var(--err); }
+  main { display:grid; grid-template-columns:1fr 1fr; gap:14px; padding:16px 20px;
+         max-width:1280px; margin:0 auto; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; }
+  .card h2 { font-size:12.5px; text-transform:uppercase; letter-spacing:.07em;
+             color:var(--dim); margin:0 0 10px; }
+  label { display:block; font-size:12px; color:var(--dim); margin:8px 0 3px; }
+  input[type=text], input[type=number], select, textarea {
+      width:100%; background:#10141c; color:var(--text); border:1px solid var(--line);
+      border-radius:6px; padding:7px 9px; font:inherit; }
+  textarea.mono { font-family:ui-monospace, Consolas, monospace; font-size:12px; }
+  .row { display:flex; gap:10px; } .row > div { flex:1; min-width:0; }
+  .check { display:flex; align-items:center; gap:7px; margin-top:8px; font-size:13px; }
+  .check input { width:auto; }
+  #drop { border:1.5px dashed var(--line); border-radius:8px; padding:18px;
+          text-align:center; color:var(--dim); cursor:pointer; }
+  #drop.over { border-color:var(--acc); color:var(--acc); }
+  #preview { max-height:170px; overflow:auto; margin-top:8px; font-size:12.5px; }
+  #preview div { padding:4px 6px; border-bottom:1px solid #1d2330;
+                 white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  button { cursor:pointer; border:1px solid var(--line); background:#1d2432; color:var(--text);
+           border-radius:7px; padding:8px 16px; font:inherit; }
+  button:disabled { opacity:.45; cursor:default; }
+  #btnStart { background:var(--acc); border-color:var(--acc); color:#fff;
+              font-weight:600; padding:10px 28px; }
+  #btnStart:hover:not(:disabled) { filter:brightness(1.12); }
+  .stepbtn { background:#3a2f14; border-color:var(--warn); color:var(--warn);
+             font-weight:600; display:none; }
+  .stepbtn.on { display:inline-block; animation:pulse 1.2s infinite; }
+  @keyframes pulse { 50% { filter:brightness(1.35); } }
+  #runBar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  #runStatus { color:var(--dim); font-size:13px; max-width:34ch; }
+  #progress { height:6px; background:#10141c; border-radius:99px; overflow:hidden; margin-top:10px; }
+  #progress > div { height:100%; width:0%; background:var(--acc); transition:width .3s; }
+  .console { background:#0b0e14; border:1px solid var(--line); border-radius:8px;
+             height:230px; overflow:auto; padding:10px; white-space:pre-wrap;
+             word-break:break-word; font:12px/1.5 ui-monospace, Consolas, monospace; }
+  .err { color:var(--err) } .ok { color:var(--ok) }
+  #dl { display:none; margin-left:auto; color:var(--ok); text-decoration:none;
+        border:1px solid var(--ok); padding:8px 14px; border-radius:7px; }
+  footer { color:#5c6678; font-size:12px; text-align:center; padding:10px 0 24px; }
+  @media (max-width:900px) { main { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>🧣 Subscription Sweater</h1>
+  <span class="sub">no API keys · no extra bills · just the subscription you already pay for</span>
+  <span id="statusPill" title="">idle</span>
+</header>
+
+<main>
+  <div class="card">
+    <h2>1 · Prompts (txt / csv / xlsx / docx)</h2>
+    <div id="drop">Drop your prompt file here, or click to browse
+      <input type="file" id="file" hidden accept=".txt,.csv,.xlsx,.xls,.docx,.doc">
+    </div>
+    <div style="margin-top:8px">
+      <label style="margin:0">Chart images (optional — auto-attached by ID, e.g. GZ-15_chart.png → GZ-15)</label>
+      <input type="file" id="images" multiple accept=".png,.jpg,.jpeg,.webp,.gif,.bmp"
+             style="font-size:12px;color:var(--dim)">
+    </div>
+    <div id="fileInfo" style="margin-top:8px;color:var(--dim);font-size:12.5px"></div>
+    <div id="preview"></div>
+  </div>
+
+  <div class="card">
+    <h2>2 · Where the prompts go</h2>
+    <label>Mode</label>
+    <select id="mode">
+      <option value="browser">Browser automation (ChatGPT / Claude / Gemini)</option>
+      <option value="desktop">Desktop app (ChatGPT / Claude desktop)</option>
+      <option value="manual">Manual paste (any app — you click 2 buttons per prompt)</option>
+      <option value="mock">Mock (offline self-test — fake answers, no account)</option>
+    </select>
+    <div id="siteRow">
+      <div class="row">
+        <div>
+          <label>Site</label>
+          <select id="site">
+            <option value="chatgpt">ChatGPT</option>
+            <option value="claude">Claude</option>
+            <option value="gemini">Gemini</option>
+            <option value="qwen">Qwen</option>
+            <option value="custom">Custom URL…</option>
+          </select>
+        </div>
+        <div>
+          <label>Model (empty = app default)</label>
+          <input type="text" id="modelSel" placeholder="e.g. GPT-5">
+        </div>
+      </div>
+    </div>
+    <div id="customUrlRow" style="display:none">
+      <label>Custom URL</label>
+      <input type="text" id="customUrl" placeholder="https://…">
+    </div>
+    <div id="desktopRow" style="display:none" class="row">
+      <div><label>App executable (empty = auto-detect)</label><input type="text" id="deskExe"></div>
+      <div><label>Debug port</label><input type="number" id="deskPort" value="9222"></div>
+    </div>
+    <div id="manualRow" style="display:none">
+      <div class="row">
+        <div><label>Window title to auto-focus (optional)</label><input type="text" id="focusWin" placeholder="e.g. ChatGPT"></div>
+        <div><label>Fixed wait s (0 = buttons)</label><input type="number" id="timer" value="0"></div>
+      </div>
+      <label class="check"><input type="checkbox" id="autoSend" checked> press Enter after pasting (auto-send)</label>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <div>
+        <label>Output format</label>
+        <select id="fmt"><option>txt</option><option>xlsx</option><option>docx</option></select>
+      </div>
+      <div>
+        <label style="margin-top:6px">New chat per prompt</label>
+        <label class="check" style="margin:0"><input type="checkbox" id="newChat" checked></label>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>3 · Tools: web search · MCP · skills</h2>
+    <div class="row">
+      <div>
+        <label>Web search</label>
+        <select id="web">
+          <option value="auto">Auto (detect from prompt text)</option>
+          <option value="always">Always on</option>
+          <option value="never">Never</option>
+        </select>
+      </div>
+      <div>
+        <label>MCP tools</label>
+        <select id="mcp">
+          <option value="never">Never</option>
+          <option value="auto">Auto (only if prompt mentions it)</option>
+          <option value="always">Always on</option>
+        </select>
+      </div>
+    </div>
+    <div class="row">
+      <div><label>Allowed MCP (empty = all configured)</label><input type="text" id="allowed" placeholder="github, files"></div>
+      <div><label>Denied (hard off)</label><input type="text" id="denied" placeholder="websearch, mcp:github, skill:x"></div>
+    </div>
+    <div class="row">
+      <div><label>Skills</label><input type="text" id="skills" placeholder="pdf, excel"></div>
+    </div>
+    <label class="check"><input type="checkbox" id="inject" checked> append tool instructions to each prompt</label>
+    <label class="check"><input type="checkbox" id="directives" checked> honor @@ directives inside the prompt file</label>
+    <label>MCP servers (JSON — auto-connected in Claude desktop mode)</label>
+    <textarea id="mcpJson" class="mono" rows="3"
+      placeholder='{"github": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"]}}'></textarea>
+  </div>
+
+  <div class="card">
+    <h2>4 · Timing</h2>
+    <div class="row">
+      <div><label>Delay between prompts (s)</label><input type="number" id="delay" value="2"></div>
+      <div><label>Answer stable for (s)</label><input type="number" id="stable" value="6"></div>
+      <div><label>Max wait per answer (s)</label><input type="number" id="maxWait" value="300"></div>
+    </div>
+    <div class="row">
+      <div><label>Start from prompt # (0 = auto-resume)</label><input type="number" id="startAt" value="0"></div>
+      <div><label>Limit (0 = all)</label><input type="number" id="limit" value="0"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div id="runBar">
+      <button id="btnStart">▶ START</button>
+      <button id="btnPause" disabled>Pause</button>
+      <button id="btnStop" disabled>Stop</button>
+      <button id="btnStep1" class="stepbtn">1) Pasted ok — app focused</button>
+      <button id="btnStep2" class="stepbtn">2) Answer selected</button>
+      <span id="runStatus">Upload a prompt file, then press START.</span>
+      <a id="dl" href="#">⬇ Download answers</a>
+    </div>
+    <div id="progress"><div></div></div>
+  </div>
+
+  <div class="card" style="grid-column:1 / -1">
+    <h2>Log</h2>
+    <div class="console" id="log"></div>
+  </div>
+</main>
+<footer>Runs 100% locally · an answer is saved to this machine after every single prompt · Stop is safe any time</footer>
+
+<script>
+const $ = id => document.getElementById(id);
+let uploaded = null;
+let lastPaused = false;
+const logEl = $("log");
+
+function logLine(t, cls) {
+  const d = document.createElement("div");
+  if (cls) d.className = cls;
+  d.textContent = t;
+  logEl.appendChild(d);
+  while (logEl.children.length > 1500) logEl.removeChild(logEl.firstChild);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+/* ---------- chart images ---------- */
+$("images").onchange = async () => {
+  if (!$("images").files.length) return;
+  const fd = new FormData();
+  for (const f of $("images").files) fd.append("images", f);
+  const r = await fetch("/api/upload-images", { method: "POST", body: fd });
+  const j = await r.json();
+  logLine(`Chart images: ${j.saved.length} uploaded (${j.saved.slice(0, 5).join(", ")}${j.saved.length > 5 ? "…" : ""})`, "ok");
+  $("images").value = "";
+};
+
+/* ---------- upload ---------- */
+const drop = $("drop"), file = $("file");
+drop.onclick = () => file.click();
+file.onchange = () => file.files[0] && upload(file.files[0]);
+["dragover", "dragleave", "drop"].forEach(ev =>
+  drop.addEventListener(ev, e => {
+    e.preventDefault();
+    drop.classList.toggle("over", ev === "dragover");
+    if (ev === "drop" && e.dataTransfer.files[0]) upload(e.dataTransfer.files[0]);
+  }));
+
+async function upload(f) {
+  logEl.innerHTML = "";
+  logLine("Uploading " + f.name + " …");
+  const fd = new FormData();
+  fd.append("file", f);
+  const r = await fetch("/api/upload", { method: "POST", body: fd });
+  const j = await r.json();
+  if (!r.ok) { logLine("Upload failed: " + (j.error || r.status), "err"); return; }
+  uploaded = j;
+  $("fileInfo").textContent = j.name + " — " + j.count + " prompts found";
+  $("preview").innerHTML = "";
+  j.preview.forEach((p, i) => {
+    const d = document.createElement("div");
+    d.textContent = (i + 1) + ".  " + p;
+    $("preview").appendChild(d);
+  });
+  logLine("Ready: " + j.count + " prompts.", "ok");
+}
+
+/* ---------- mode visibility ---------- */
+const MODEL_HINTS = {
+  chatgpt: "e.g. GPT-5, GPT-4o, o3",
+  claude: "e.g. Opus, Sonnet, Haiku",
+  gemini: "e.g. Gemini 2.5 Pro",
+  qwen: "e.g. Qwen3-Max, Qwen3, Qwen-Long",
+  custom: "model name, or empty",
+};
+function syncMode() {
+  const m = $("mode").value;
+  $("siteRow").style.display = (m === "browser" || m === "desktop") ? "" : "none";
+  $("desktopRow").style.display = m === "desktop" ? "" : "none";
+  $("manualRow").style.display = m === "manual" ? "" : "none";
+  $("customUrlRow").style.display = ($("site").value === "custom" && m === "browser") ? "" : "none";
+  $("modelSel").placeholder = MODEL_HINTS[$("site").value] || "e.g. GPT-5";
+}
+$("mode").onchange = syncMode;
+$("site").onchange = syncMode;
+syncMode();
+
+/* ---------- live log (SSE) + backlog ---------- */
+const es = new EventSource("/api/log");
+es.addEventListener("message", e => logLine(JSON.parse(e.data)));
+fetch("/api/log/backlog").then(r => r.json()).then(lines => {
+  lines.forEach(t => logLine(t));
+}).catch(() => {});
+
+/* ---------- state polling ---------- */
+async function tick() {
+  let s;
+  try { s = await (await fetch("/api/state")).json(); } catch (e) { /* retry next tick */ }
+  if (s) {
+    const pill = $("statusPill");
+    pill.textContent = s.status || (s.running ? "running" : "idle");
+    pill.title = s.error || s.status || "";
+    pill.className = s.running ? "running" : (s.error ? "error" : (s.done ? "done" : ""));
+    $("btnStart").disabled = s.running;
+    $("btnPause").disabled = !s.running;
+    $("btnStop").disabled = !s.running;
+    $("btnPause").textContent = s.paused ? "Resume" : "Pause";
+    lastPaused = s.paused;
+    $("btnStep1").classList.toggle("on", s.pending_step === 1);
+    $("btnStep2").classList.toggle("on", s.pending_step === 2);
+    $("runStatus").textContent = s.pending_step
+      ? s.step_text
+      : (s.status ? s.status : "Upload a prompt file, then press START.");
+    const pct = s.total ? (100 * s.progress / s.total) : 0;
+    document.querySelector("#progress > div").style.width = pct + "%";
+    const dl = $("dl");
+    if (s.output_file) {
+      dl.style.display = "inline-block";
+      dl.href = "/api/download?file=" + encodeURIComponent(s.output_file);
+    } else dl.style.display = "none";
+  }
+  setTimeout(tick, 1500);
+}
+tick();
+
+/* ---------- actions ---------- */
+function num(id, def) { const v = parseFloat($(id).value); return isNaN(v) ? def : v; }
+
+$("btnStart").onclick = async () => {
+  if (!uploaded) { alert("Upload a prompt file first."); return; }
+  const mcpRaw = $("mcpJson").value.trim();
+  let mcpServers = {};
+  if (mcpRaw) {
+    try { mcpServers = JSON.parse(mcpRaw); }
+    catch (e) { alert("MCP servers JSON is invalid: " + e.message); return; }
+  }
+  const body = {
+    mode: $("mode").value, site: $("site").value, custom_url: $("customUrl").value,
+    model: $("modelSel").value,
+    desktop_exe: $("deskExe").value, desktop_port: num("deskPort", 9222),
+    focus_window: $("focusWin").value, timer_seconds: num("timer", 0),
+    auto_send: $("autoSend").checked, output_format: $("fmt").value,
+    new_chat: $("newChat").checked,
+    web_search: $("web").value, mcp: $("mcp").value,
+    allowed_mcp: $("allowed").value, denied: $("denied").value, skills: $("skills").value,
+    inject_instructions: $("inject").checked, use_directives: $("directives").checked,
+    mcp_servers: mcpServers,
+    delay_between: num("delay", 2), stable_seconds: num("stable", 6),
+    max_wait_seconds: num("maxWait", 300), start_index: num("startAt", 0), limit: num("limit", 0),
+  };
+  const r = await fetch("/api/run", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+  });
+  const j = await r.json();
+  if (!r.ok) logLine("Run failed: " + (j.error || r.status), "err");
+  else logLine("Run started.", "ok");
+};
+$("btnPause").onclick = () => fetch(lastPaused ? "/api/resume" : "/api/pause", { method: "POST" });
+$("btnStop").onclick  = () => fetch("/api/stop", { method: "POST" });
+$("btnStep1").onclick = () => fetch("/api/step", { method: "POST" });
+$("btnStep2").onclick = () => fetch("/api/step", { method: "POST" });
+</script>
+</body>
+</html>

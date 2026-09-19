@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+browser_profile/
+debug/
+web_uploads/
+web_outputs/
+settings.json
+*.bak
+.DS_Store
+sample/answers_sample*
