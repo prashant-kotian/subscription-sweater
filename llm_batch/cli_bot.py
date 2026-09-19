@@ -7,7 +7,10 @@ Terminal mode is the bridge between that and this tool:
 
 * one headless call per prompt:  gemini -p "…"   /   qwen -p "…"
 * each call is a FRESH session (equivalent to "new chat" ON); with
-  --no-new-chat the bot passes --resume latest so prompts share a session
+  --no-new-chat the bot passes the site's own "continue most recent session"
+  flag so prompts share a session (gemini: --resume latest; qwen: --continue
+  -- qwen's own --resume takes a real session ID with no "latest" special
+  case, unlike gemini's)
 * MCP servers the client configured are written into the client's settings
   file by the engine before the run (mcp_config.ensure_cli_mcp_servers) and
   then SCOPED PER PROMPT with --allowed-mcp-server-names: the exact servers
@@ -49,6 +52,9 @@ def _cli_spec(site: str) -> dict:
             "settings": "~/.gemini/settings.json",
             "mcp_tool": "gemini mcp add <name> <command>",
             "model_hint": "e.g. gemini-3.1-pro-preview, gemini-3-flash-preview — empty = client Auto",
+            # confirmed via `gemini --help`: -r/--resume explicitly documents
+            # "latest" as a real special value ("Use 'latest' for most recent").
+            "continue_args": ["--resume", "latest"],
         }
     if site == "qwen":
         return {
@@ -60,6 +66,12 @@ def _cli_spec(site: str) -> dict:
             "settings": "~/.qwen/settings.json",
             "mcp_tool": "qwen mcp add <name> <command>",
             "model_hint": "e.g. qwen3-coder-next, qwen3-max — empty = client default",
+            # confirmed via `qwen --help`: unlike gemini, --resume/-r here takes
+            # a REAL session ID ("Resume a specific session by its ID") with no
+            # "latest" special-case -- passing the literal string "latest" would
+            # be treated as an id that doesn't exist. The real "most recent
+            # session" flag is the separate -c/--continue boolean.
+            "continue_args": ["--continue"],
         }
     raise ToolError(
         f"Terminal mode supports: gemini, qwen (their official CLI clients are "
@@ -94,7 +106,7 @@ class TerminalCLIBot:
                  f"answers captured from stdout.")
         if not self.new_chat:
             self.log("  (sessions: continuing the latest CLI session per run "
-                     "(--resume latest))")
+                     f"({' '.join(self.spec['continue_args'])}))")
         if self.yolo:
             self.log("  (auto-approve: ON — tool calls run without confirmation; "
                      "CLI flag --no-yolo disables this)")
@@ -118,7 +130,7 @@ class TerminalCLIBot:
         if self.yolo:
             cmd += ["--yolo"]
         if not self.new_chat:
-            cmd += ["--resume", "latest"]
+            cmd += s["continue_args"]
         return cmd
 
     # ------------------------------------------------------------------ #

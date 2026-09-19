@@ -236,8 +236,13 @@ def test_terminal(tmp: str, txt: str) -> None:
                                                                PromptDecision(clean_prompt="h"))
     assert "--allowed-mcp-server-names" not in cmd, cmd
 
-    bot_nc = TerminalCLIBot(site="qwen", new_chat=False, log=quiet)
-    assert bot_nc.build_command("h", PromptDecision(clean_prompt="h"))[-2:] == ["--resume", "latest"]
+    # resume flag is real and site-specific: gemini's --resume documents
+    # "latest" as a special value; qwen's --resume takes a real session ID
+    # with no such case, so qwen uses the separate --continue flag instead.
+    bot_nc_g = TerminalCLIBot(site="gemini", new_chat=False, log=quiet)
+    assert bot_nc_g.build_command("h", PromptDecision(clean_prompt="h"))[-2:] == ["--resume", "latest"]
+    bot_nc_q = TerminalCLIBot(site="qwen", new_chat=False, log=quiet)
+    assert bot_nc_q.build_command("h", PromptDecision(clean_prompt="h"))[-1:] == ["--continue"]
 
     for s in CLI_SITES:
         assert TerminalCLIBot(site=s, log=quiet).spec["bin"] in ("gemini", "qwen")
