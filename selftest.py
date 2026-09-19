@@ -16,6 +16,13 @@ import os
 import sys
 import tempfile
 
+# Same Windows cp1252-vs-UTF8 fix as main.py -- this file's own final banner
+# uses a checkmark that otherwise crashes the selftest with a false failure
+# after every real check has already passed.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from llm_batch import readers, writers  # noqa: E402

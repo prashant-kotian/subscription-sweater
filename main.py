@@ -14,6 +14,15 @@ import json
 import os
 import sys
 
+# Windows' console defaults Python's stdout/stderr to the legacy code page
+# (cp1252), which raises UnicodeEncodeError on the em-dashes this file's own
+# log lines use (confirmed live crash on Ctrl+C and on the web-UI startup
+# line) -- force UTF-8 so a real batch's interrupt handler can't itself crash
+# instead of reporting "progress saved". No-op on platforms already UTF-8.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 

@@ -52,7 +52,13 @@ def cli_settings_path(site: str) -> str | None:
     entry = CLI_SETTINGS.get(site)
     if not entry:
         return None
-    return os.path.expanduser(entry[0])
+    # expanduser() only swaps "~" for the native-separator home dir and leaves
+    # the rest of the literal ("/.gemini/settings.json") as forward slashes --
+    # on Windows this gives a real, silently-mixed-separator path (still
+    # openable, since Windows accepts either separator, but not equal as a
+    # string to a path built via os.path.join elsewhere, e.g. this module's
+    # own tests). normpath() makes it consistently native.
+    return os.path.normpath(os.path.expanduser(entry[0]))
 
 
 def _merge_mcp_into(path: str, servers: dict, log=print, note: str = "") -> str | None:
