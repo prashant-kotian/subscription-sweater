@@ -2,9 +2,11 @@
 """Offline self-test for the LLM Batch Tool.
 
 Creates sample input files (.txt/.xlsx/.docx/.csv), checks the tool-policy
-engine (web search / MCP / skills, directives, deny lists), then runs a MOCK
-batch into each output format and verifies the round-trip. No browser, no LLM,
-no network needed:
+engine (web search / MCP / skills, directives, deny lists), checks terminal
+mode (official Gemini CLI / Qwen Code clients — command building, MCP settings
+merge, and a full run against a stub CLI), then runs a MOCK batch into each
+output format and verifies the round-trip. No browser, no LLM, no network,
+no real CLI installs needed:
 
     python selftest.py
 """
@@ -191,6 +193,130 @@ def test_images(tmp: str) -> None:
 
 
 # --------------------------------------------------------------------------- #
+def test_terminal(tmp: str, txt: str) -> None:
+    import json as json_mod
+
+    out_term = os.path.join(tmp, "answers_terminal.txt")
+    from llm_batch import mcp_config
+    from llm_batch.cli_bot import CLI_SITES, TerminalCLIBot
+    from llm_batch.errors import ToolError
+    from llm_batch.policy import PromptDecision
+
+    quiet = lambda *a, **k: None  # noqa: E731
+
+    # -- build_command: exact argv per policy decision ----------------------- #
+    bot = TerminalCLIBot(site="gemini", log=quiet)
+    d = PromptDecision(clean_prompt="hello")
+    cmd = bot.build_command("hello", d)
+    assert cmd[:3] == ["gemini", "-p", "hello"] and "--yolo" in cmd, cmd
+
+    d = PromptDecision(clean_prompt="hello", target_model="gemini-2.5-pro")
+    assert bot.build_command("hello", d)[3:5] == ["--model", "gemini-2.5-pro"]
+
+    d = PromptDecision(clean_prompt="hello", mcp=True, mcp_names=["github", "files"])
+    cmd = bot.build_command("hello", d)
+    i = cmd.index("--allowed-mcp-server-names")
+    assert cmd[i + 1] == "github" and cmd.count("--allowed-mcp-server-names") == 2, cmd
+
+    # mcp=OFF prompt in a run that HAS servers → allow-list matches nothing
+    bot_srv = TerminalCLIBot(site="gemini", has_mcp_servers=True, log=quiet)
+    d = PromptDecision(clean_prompt="hello", mcp=False)
+    cmd = bot_srv.build_command("hello", d)
+    i = cmd.index("--allowed-mcp-server-names")
+    assert cmd[i + 1] == "__subscription_sweater_no_mcp__", cmd
+    # …but a run with no servers configured → no allow-list flag at all
+    cmd = TerminalCLIBot(site="qwen", log=quiet).build_command("hello",
+                                                               PromptDecision(clean_prompt="h"))
+    assert "--allowed-mcp-server-names" not in cmd, cmd
+
+    bot_nc = TerminalCLIBot(site="qwen", new_chat=False, log=quiet)
+    assert bot_nc.build_command("h", PromptDecision(clean_prompt="h"))[-2:] == ["--resume", "latest"]
+
+    for s in CLI_SITES:
+        assert TerminalCLIBot(site=s, log=quiet).spec["bin"] in ("gemini", "qwen")
+    print("  terminal  : command builder (model / mcp scoping / resume)  OK")
+
+    # -- MCP settings merge (fake HOME, never the real one) ------------------ #
+    home = os.path.join(tmp, "fakehome")
+    os.makedirs(os.path.join(home, ".gemini"), exist_ok=True)
+    gpath = os.path.join(home, ".gemini", "settings.json")
+    with open(gpath, "w", encoding="utf-8") as f:
+        json_mod.dump({"theme": "dark",
+                       "mcpServers": {"existing": {"command": "echo"}}}, f)
+    old_home = os.environ.get("HOME"), os.environ.get("USERPROFILE")
+    os.environ["HOME"] = home
+    if old_home[1]:
+        os.environ["USERPROFILE"] = home
+    try:
+        assert mcp_config.cli_settings_path("gemini") == gpath
+        assert mcp_config.cli_settings_path("qwen").endswith(os.path.join(".qwen", "settings.json"))
+        p = mcp_config.ensure_cli_mcp_servers("gemini", SERVERS, log=quiet)
+        assert p == gpath
+        data = json_mod.load(open(gpath, encoding="utf-8"))
+        assert data["theme"] == "dark"                        # user keys untouched
+        assert set(data["mcpServers"]) == {"existing", "github", "files"}
+        backups = [x for x in os.listdir(os.path.join(home, ".gemini"))
+                   if x.startswith("settings.json.bak-")]
+        assert backups, "original must be backed up before merge"
+        mcp_config.ensure_cli_mcp_servers("gemini", SERVERS, log=quiet)  # idempotent
+    finally:
+        os.environ["HOME"] = old_home[0]
+        if old_home[1]:
+            os.environ["USERPROFILE"] = old_home[1]
+    print("  terminal  : MCP settings merge (backup + user keys kept)  OK")
+
+    # -- missing client → actionable error, not a crash ----------------------- #
+    empty = os.path.join(tmp, "empty"); os.makedirs(empty, exist_ok=True)
+    old_path = os.environ["PATH"]
+    os.environ["PATH"] = empty
+    try:
+        try:
+            TerminalCLIBot(site="gemini", log=quiet).start()
+            raise AssertionError("expected ToolError for missing client")
+        except ToolError as e:
+            assert "npm install -g @google/gemini-cli" in str(e), str(e)
+    finally:
+        os.environ["PATH"] = old_path
+    print("  terminal  : missing-client error message  OK")
+
+    # -- end-to-end with a stub 'gemini' on PATH (posix only) ----------------- #
+    if not (sys.platform.startswith("linux") or sys.platform == "darwin"):
+        print("  terminal  : e2e stub skipped (posix only)")
+        return
+    bin_dir = os.path.join(tmp, "bin")
+    os.makedirs(bin_dir, exist_ok=True)
+    stub = os.path.join(bin_dir, "gemini")
+    with open(stub, "w", encoding="utf-8") as f:
+        f.write('#!/bin/sh\nprintf "%s\\n" "$@" > "$STUB_LOG"\n'
+                'printf "STUB ANSWER: %s\\n" "$2"\n')
+    os.chmod(stub, 0o755)
+    stub_log = os.path.join(tmp, "stub_args.txt")
+    os.environ["PATH"] = bin_dir + os.pathsep + old_path
+    os.environ["STUB_LOG"] = stub_log
+    os.environ["HOME"] = home                      # MCP merge must not touch the real one
+    try:
+        Engine(
+            RunConfig(mode="terminal", site="gemini", input_path=txt,
+                      output_path=out_term, web_search="never", mcp="always",
+                      mcp_servers=SERVERS, delay_between=0.0),
+            log=lambda m: None, progress=lambda d, t: None,
+        ).run()
+        w = writers.make_writer(out_term, log=lambda m: None)
+        n = w.count(); w.close()
+        assert n == len(SAMPLE_PROMPTS), f"terminal e2e: expected {len(SAMPLE_PROMPTS)}, got {n}"
+        calls = open(stub_log, encoding="utf-8").read()
+        assert "--yolo" in calls and "--allowed-mcp-server-names" in calls, calls
+        g = json_mod.load(open(gpath, encoding="utf-8"))
+        assert "github" in g["mcpServers"]
+    finally:
+        os.environ["PATH"] = old_path
+        os.environ["HOME"] = old_home[0]
+        if old_home[1]:
+            os.environ["USERPROFILE"] = old_home[1]
+        os.environ.pop("STUB_LOG", None)
+    print(f"  terminal  : e2e run via stub CLI ({n} answers, flags verified)  OK")
+
+
 def make_inputs(tmp: str):
     txt = os.path.join(tmp, "prompts.txt")
     with open(txt, "w", encoding="utf-8") as f:
@@ -241,6 +367,9 @@ def main() -> int:
         got = readers.read_prompts(src)
         assert got == SAMPLE_PROMPTS, f"{name}: expected {len(SAMPLE_PROMPTS)} prompts, got {len(got)}: {got!r}"
         print(f"  read  {name:5s}: {len(got)} prompts  OK")
+
+    # 3a · terminal mode (official Gemini CLI / Qwen Code clients) ----------- #
+    test_terminal(tmp, txt)
 
     # 3 · mock run into every output format (with tool policy active) --------
     for ext in ["txt", "xlsx", "docx"]:

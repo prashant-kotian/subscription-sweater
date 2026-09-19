@@ -60,7 +60,7 @@ What did the Fed decide at their latest meeting?
    restarting auto-resumes at the next unanswered prompt.
 8. **Next prompt** after the 2 s delay.
 
-## The three modes differ in one thing
+## The five modes differ in one thing
 
 - **Browser** — the tool opens *its own* Chromium window on the site
   (never your personal browser; clean profile, no extensions).
@@ -68,6 +68,19 @@ What did the Fed decide at their latest meeting?
   debug flag and *attaches to that window* (both desktop apps are Chromium
   under the hood), then runs steps 3–7 inside the real app. Your app keeps
   running when the run ends.
+- **Terminal (CLI)** — for **Gemini and Qwen**, which ship no MCP attachment in
+  their web products but *do* ship official CLI clients that natively speak
+  MCP. The tool runs one headless call per prompt
+  (`gemini -p "…"` / `qwen -p "…"`, `--model` when you pick one, `--yolo` so
+  tool calls never hang on a confirmation, `--resume latest` if you turned new
+  chat off) and captures stdout. Before the run it merges your MCP servers
+  into the client's settings file (`~/.gemini/settings.json` /
+  `~/.qwen/settings.json` — same `mcpServers` JSON you paste in the UI,
+  timestamped backup first), and each prompt is scoped with
+  `--allowed-mcp-server-names` to exactly the servers the policy decided for
+  it — a prompt with MCP off gets an allow-list that matches nothing, so it
+  *can't* call a tool, not just "isn't asked" to. Login is one-time in your
+  own terminal (`gemini` / `qwen` → sign in; free tier, no API key).
 - **Manual paste** — for any other app: the tool pastes the prompt and presses
   the copy key for you; you just focus the window, click **1**, select the
   answer, click **2**.
@@ -83,9 +96,12 @@ Per prompt, three layers, highest priority first:
    price"…), MCP *Never / Auto / Always*, allowed/denied server lists, skills.
 
 Enforcement, in order: **UI toggle** (best effort) → **MCP config** (Claude
-desktop: writes your servers JSON into the app's config, original backed up) →
-**text instruction** (always, in every app). So "never use web search" truly
-never uses web search, in any client — and the log proves it per prompt.
+desktop, Gemini CLI, Qwen Code: writes your servers JSON into the client's
+config, original backed up) → **CLI allow-list** (terminal mode:
+`--allowed-mcp-server-names` per prompt, so MCP-off prompts have no tools
+connected at all) → **text instruction** (always, in every app). So "never use
+web search" truly never uses web search, in any client — and the log proves it
+per prompt.
 
 ## Where things live on your machine
 

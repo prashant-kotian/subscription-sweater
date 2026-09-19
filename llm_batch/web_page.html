@@ -89,8 +89,9 @@
     <h2>2 · Where the prompts go</h2>
     <label>Mode</label>
     <select id="mode">
-      <option value="browser">Browser automation (ChatGPT / Claude / Gemini)</option>
+      <option value="browser">Browser automation (ChatGPT / Claude / Gemini / Qwen)</option>
       <option value="desktop">Desktop app (ChatGPT / Claude desktop)</option>
+      <option value="terminal">Terminal (CLI) — Gemini / Qwen official clients (native MCP)</option>
       <option value="manual">Manual paste (any app — you click 2 buttons per prompt)</option>
       <option value="mock">Mock (offline self-test — fake answers, no account)</option>
     </select>
@@ -270,13 +271,26 @@ const MODEL_HINTS = {
   qwen: "e.g. Qwen3-Max, Qwen3, Qwen-Long",
   custom: "model name, or empty",
 };
+const TERMINAL_SITES = ["gemini", "qwen"];
+const TERMINAL_HINTS = {
+  gemini: "e.g. gemini-2.5-pro, gemini-2.5-flash",
+  qwen: "e.g. qwen3-coder, qwen3-max",
+};
 function syncMode() {
   const m = $("mode").value;
-  $("siteRow").style.display = (m === "browser" || m === "desktop") ? "" : "none";
+  const siteSel = $("site");
+  [...siteSel.options].forEach(o => { o.disabled = (m === "terminal" && !TERMINAL_SITES.includes(o.value)); });
+  if (m === "terminal" && !TERMINAL_SITES.includes(siteSel.value)) siteSel.value = "gemini";
+  if (m !== "terminal") {
+    const v = siteSel.value;
+    [...siteSel.options].forEach(o => { o.disabled = false; });
+    siteSel.value = v;
+  }
+  $("siteRow").style.display = (m === "browser" || m === "desktop" || m === "terminal") ? "" : "none";
   $("desktopRow").style.display = m === "desktop" ? "" : "none";
   $("manualRow").style.display = m === "manual" ? "" : "none";
   $("customUrlRow").style.display = ($("site").value === "custom" && m === "browser") ? "" : "none";
-  $("modelSel").placeholder = MODEL_HINTS[$("site").value] || "e.g. GPT-5";
+  $("modelSel").placeholder = (m === "terminal" ? TERMINAL_HINTS[$("site").value] : MODEL_HINTS[$("site").value]) || "e.g. GPT-5";
 }
 $("mode").onchange = syncMode;
 $("site").onchange = syncMode;

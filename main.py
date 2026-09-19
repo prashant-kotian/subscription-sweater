@@ -36,10 +36,12 @@ def build_parser() -> argparse.ArgumentParser:
                     "Claude / Gemini (browser, desktop app, or any LLM app) "
                     "and save the answers.",
     )
-    p.add_argument("--mode", choices=["browser", "desktop", "manual", "mock"],
+    p.add_argument("--mode", choices=["browser", "desktop", "terminal", "manual", "mock"],
                    default="browser",
                    help="browser = drive the chat site in Chromium; "
                         "desktop = drive the ChatGPT/Claude desktop app; "
+                        "terminal = drive the official Gemini CLI / Qwen Code "
+                        "(site gemini|qwen — their native MCP path); "
                         "manual = you focus the app, tool pastes/copies; "
                         "mock = offline self-test with fake answers")
     p.add_argument("--site", choices=["chatgpt", "claude", "gemini", "qwen", "custom"],
@@ -69,6 +71,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="CDP debug port used to attach to the desktop app")
     p.add_argument("--attach-only", action="store_true",
                    help="desktop mode: app is already running with the flag; just attach")
+    # terminal mode
+    p.add_argument("--no-yolo", dest="yolo", action="store_false", default=True,
+                   help="terminal mode: don't auto-approve tool calls "
+                        "(prompts needing confirmation may fail headless)")
     # manual mode
     p.add_argument("--focus-window", default="",
                    help="manual mode: window title to auto-focus before pasting")
@@ -171,6 +177,7 @@ def run_cli(args: argparse.Namespace) -> int:
         headless=args.headless, txt_mode=args.txt_mode,
         desktop_exe=args.desktop_exe, desktop_port=args.desktop_port,
         desktop_attach_only=args.attach_only, focus_window=args.focus_window,
+        yolo=args.yolo,
         delay_between=args.delay, stable_seconds=args.stable,
         max_wait_seconds=args.max_wait, login_timeout=args.login_timeout,
         min_answer_chars=args.min_chars, new_chat=args.new_chat,

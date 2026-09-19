@@ -4,6 +4,30 @@ All notable changes to Subscription Sweater are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] — 2026-09-20
+
+### Added
+- **Terminal (CLI) mode** — the native MCP path for **Gemini and Qwen**:
+  drives the official open-source clients headless (`gemini -p "…"` /
+  `qwen -p "…"`, one call per prompt, `--model`, `--yolo` auto-approve,
+  `--resume latest` for shared sessions) and captures the answer from stdout.
+- **MCP settings merge for the CLI clients** — your MCP servers JSON is merged
+  into `~/.gemini/settings.json` / `~/.qwen/settings.json` (same `mcpServers`
+  shape as Claude desktop) with a timestamped backup, exactly like the Claude
+  desktop config merge.
+- **Per-prompt CLI allow-list** — terminal mode passes
+  `--allowed-mcp-server-names` with the exact servers the policy decided for
+  that prompt; an MCP-off prompt gets an allow-list that matches nothing, so
+  it physically cannot call an MCP tool.
+- GUI + web UI: Terminal mode with site restriction (Gemini/Qwen), model hints
+  per client, install/login instructions in-place.
+- `selftest.py`: terminal-mode coverage (command builder, settings merge with
+  backup, missing-client error, full e2e run against a stub CLI).
+
+### Changed
+- `mcp_config.py` generalised: one merge engine for Claude desktop + Gemini
+  CLI + Qwen Code.
+
 ## [1.0.0] — 2026-09-19
 
 ### Added

@@ -15,7 +15,7 @@ paste the full terminal / web-UI log here, including the
 ```
 
 **Steps to reproduce**
-1. Mode (browser / desktop / manual / mock):
+1. Mode (browser / desktop / terminal / manual / mock):
 2. Site (ChatGPT / Claude / Gemini / Qwen / custom):
 3. Command or exact GUI settings:
 

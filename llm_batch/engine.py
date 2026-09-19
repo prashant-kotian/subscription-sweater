@@ -1,6 +1,6 @@
-"""The batch engine: reads prompts, drives a bot (browser / desktop / manual /
-mock), applies the tool policy per prompt, and appends every prompt+answer
-pair to the output file as it goes.
+"""The batch engine: reads prompts, drives a bot (browser / desktop / terminal /
+manual / mock), applies the tool policy per prompt, and appends every
+prompt+answer pair to the output file as it goes.
 """
 from __future__ import annotations
 
@@ -31,6 +31,8 @@ class RunConfig:
     desktop_attach_only: bool = False
     # manual mode
     focus_window: str = ""
+    # terminal mode (official Gemini CLI / Qwen Code clients)
+    yolo: bool = True                    # auto-approve tool calls (headless runs)
     # timing
     delay_between: float = 2.0
     stable_seconds: float = 6.0
@@ -190,6 +192,28 @@ class Engine:
                 log=self.log,
                 should_stop=self._should_stop,
             )
+        if cfg.mode == "terminal":
+            from . import mcp_config
+            from .cli_bot import CLI_SITES, TerminalCLIBot
+
+            if cfg.site not in CLI_SITES:
+                raise ToolError(
+                    "Terminal mode supports: gemini, qwen (their official CLI "
+                    "clients are what natively speak MCP). For ChatGPT/Claude "
+                    "use browser or desktop mode; any other app: manual mode.")
+            policy = self._policy()
+            servers = policy.selected_servers()
+            if servers:
+                mcp_config.ensure_cli_mcp_servers(cfg.site, servers, log=self.log)
+            return TerminalCLIBot(
+                site=cfg.site,
+                yolo=cfg.yolo,
+                new_chat=cfg.new_chat,
+                has_mcp_servers=bool(servers),
+                max_wait_seconds=cfg.max_wait_seconds,
+                log=self.log,
+                should_stop=self._should_stop,
+            )
         if cfg.mode == "desktop":
             from .browser_bot import DesktopBot
 
@@ -212,7 +236,7 @@ class Engine:
                 log=self.log,
                 should_stop=self._should_stop,
             )
-        raise ToolError(f"Unknown mode '{cfg.mode}' (use browser / desktop / manual / mock).")
+        raise ToolError(f"Unknown mode '{cfg.mode}' (use browser / desktop / terminal / manual / mock).")
 
     # -- main loop -------------------------------------------------------------- #
     def run(self) -> None:

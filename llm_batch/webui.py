@@ -151,6 +151,7 @@ def _build_run_cfg(body: dict) -> RunConfig:
         desktop_exe=s("desktop_exe"),
         desktop_port=i("desktop_port", 9222),
         desktop_attach_only=bool(body.get("desktop_attach_only", False)),
+        yolo=bool(body.get("yolo", True)),
         focus_window=s("focus_window"),
         delay_between=f("delay_between", 2.0),
         stable_seconds=f("stable_seconds", 6.0),

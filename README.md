@@ -45,12 +45,13 @@ the app, paste, wait, copy — but a thousand times over, unattended:
 
 ## Features
 
-- **4 ways to reach the LLM**
+- **5 ways to reach the LLM**
 
   | Mode | What it does | Good for |
   |---|---|---|
   | **Browser automation** | Drives its own Chromium window on ChatGPT / Claude / Gemini / Qwen. Login once, remembered forever. | unattended batches |
   | **Desktop app automation** | Attaches to the **official ChatGPT / Claude desktop app** (CDP) and runs the same automation inside it. | you live in the desktop app |
+  | **Terminal (CLI)** | Drives the **official Gemini CLI / Qwen Code** clients headless (`gemini -p "…"` / `qwen -p "…"`), one call per prompt — and it's the **native MCP path for Gemini & Qwen** (their web products have no MCP attachment at all). | unattended Gemini/Qwen batches **with real MCP tools** |
   | **Manual paste** | The tool pastes the prompt and copies the answer *for you*; you click two buttons per prompt (auto window-focus by title). | **any** LLM app that has no other option |
   | **Mock** | No browser, no LLM — fake answers. | test files/settings for free |
 
@@ -58,8 +59,10 @@ the app, paste, wait, copy — but a thousand times over, unattended:
   `Sonnet`, `Qwen3-Max`…): the tool clicks the site's own model picker.
 - **Tool control (web search / MCP / skills)** — per run *and per prompt*:
   force ON/OFF, allow/deny specific MCP servers, attach skills, and **connect
-  any MCP server** (paste its JSON; for Claude desktop it's written into the
-  app's config automatically, original backed up).
+  any MCP server** (paste its JSON — it's written into the right client
+  automatically, original backed up: Claude desktop config, `~/.gemini/` for
+  Gemini CLI, `~/.qwen/` for Qwen Code — and each prompt is scoped to exactly
+  the servers it's allowed to use).
 - **Attach chart images automatically** — name them after the prompt ID and
   the tool clicks the paperclip for you (vision questions included).
 - **Understands benchmark sheets** — files wrapped in
@@ -97,14 +100,28 @@ Upload prompts (+ chart images) · pick mode/site/model · flip the toggles ·
 
 ## Supported targets
 
-| Target | Browser mode | Desktop mode | Notes |
-|---|---|---|---|
-| **ChatGPT** | ✅ | ✅ | model picker, Web toggle, image attach |
-| **Claude** | ✅ | ✅ | model picker, Research toggle, MCP config merge, image attach |
-| **Gemini** | ✅ | — | model picker, image attach |
-| **Qwen** | ✅ | — | chat.qwen.ai, model picker, image attach |
-| **Any other URL** | ✅ (custom URL) | — | generic selectors + `--debug` dumps to teach it |
-| **Any app, anywhere** | ✅ (manual mode) | — | paste/copy on your behalf |
+| Target | Browser | Desktop | Terminal (CLI) | Notes |
+|---|---|---|---|---|
+| **ChatGPT** | ✅ | ✅ | — | model picker, Web toggle, image attach |
+| **Claude** | ✅ | ✅ | — | model picker, Research toggle, MCP config merge, image attach |
+| **Gemini** | ✅ | — | ✅ | browser: model picker + image attach · **CLI: native MCP** (`gemini -p`, `~/.gemini/settings.json`) |
+| **Qwen** | ✅ | — | ✅ | browser: chat.qwen.ai · **CLI: native MCP** (`qwen -p`, `~/.qwen/settings.json`) |
+| **Any other URL** | ✅ (custom URL) | — | — | generic selectors + `--debug` dumps to teach it |
+| **Any app, anywhere** | ✅ (manual mode) | — | — | paste/copy on your behalf |
+
+**Terminal mode in 3 commands** (free login, no API key — Node.js 18+):
+
+```bash
+npm install -g @google/gemini-cli        # Gemini  (or: brew install gemini-cli)
+gemini                                    # once: sign in with your Google account
+python main.py --mode terminal --site gemini -i prompts.txt -o answers.txt
+```
+
+Qwen Code works the same way: `npm install -g @qwen-code/qwen-code` → sign in
+with your Qwen account once → `--mode terminal --site qwen`. Your MCP servers
+(pasted in the UI or `--mcp-json`) are merged into the client's settings file
+with a timestamped backup, then scoped **per prompt** — a prompt with MCP off
+literally can't call an MCP tool (`--allowed-mcp-server-names` allow-list).
 
 If a site redesigns a button, run once with `--debug`: screenshots + HTML land
 in `debug/`, and the exact selector goes into the 20-line table at the top of
@@ -138,10 +155,12 @@ web", "latest", "today's price"…) / Always / Never · MCP Never / Auto / Alway
 allowed & denied server lists · skills.
 
 Enforced three ways: the site's own **UI toggle** (only when its state can be
-read), **MCP config** (Claude desktop, with backup), and an explicit
-**instruction line** appended to the prompt — so "never use web search" is
-honoured in *every* client, and the log prints the resolved decision per prompt:
-`tools: web=off  mcp=ON(github)  model=GPT-5`.
+read), **MCP config** (Claude desktop / Gemini CLI / Qwen Code — with backup),
+a per-prompt **CLI allow-list** in terminal mode
+(`--allowed-mcp-server-names`, so a prompt with MCP off can't call any tool),
+and an explicit **instruction line** appended to the prompt — so "never use web
+search" is honoured in *every* client, and the log prints the resolved decision
+per prompt: `tools: web=off  mcp=ON(github)  model=GPT-5`.
 
 ## Reliability details
 

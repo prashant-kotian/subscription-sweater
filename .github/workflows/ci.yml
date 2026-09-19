@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  selftest:
+    name: selftest (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Run offline self-test (no network, no accounts)
+        run: python selftest.py
+      - name: Web UI sanity check
+        run: |
+          python - <<'PY'
+          from llm_batch.webui import create_app
+          app = create_app()
+          c = app.test_client()
+          r = c.get("/")
+          assert r.status_code == 200 and b"Subscription Sweater" in r.data
+          r2 = c.get("/api/state")
+          assert r2.status_code == 200
+          print("web UI OK")
+          PY

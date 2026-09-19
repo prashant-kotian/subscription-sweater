@@ -34,10 +34,11 @@ OUTPUT_TYPES = [
 MODES = [
     "Browser automation (ChatGPT / Claude / Gemini)",
     "Desktop app automation (ChatGPT / Claude desktop)",
+    "Terminal (CLI) — Gemini / Qwen official clients (native MCP)",
     "Manual paste mode (any LLM app, desktop or web)",
     "Mock mode (offline self-test)",
 ]
-MODE_KEYS = ["browser", "desktop", "manual", "mock"]
+MODE_KEYS = ["browser", "desktop", "terminal", "manual", "mock"]
 SITES = ["ChatGPT", "Claude", "Gemini", "Qwen", "Custom URL…"]
 SITE_KEYS = ["chatgpt", "claude", "gemini", "qwen", "custom"]
 FMTS = ["txt", "xlsx", "docx"]
@@ -171,7 +172,7 @@ class App:
         self.frame_site.columnconfigure(3, weight=1)
         ttk.Label(self.frame_site, text="Site:").grid(row=0, column=0, sticky="w", padx=6, pady=2)
         self.var_site = tk.StringVar(value=SITES[0])
-        ttk.Combobox(self.frame_site, textvariable=self.var_site, values=SITES,
+        self.cmb_site = ttk.Combobox(self.frame_site, textvariable=self.var_site, values=SITES,
                      state="readonly", width=16).grid(row=0, column=1, padx=4)
         ttk.Label(self.frame_site, text="Custom URL:").grid(row=0, column=2, sticky="e", padx=4)
         self.var_url = tk.StringVar()
@@ -195,6 +196,11 @@ class App:
             "qwen": "e.g. Qwen3-Max, Qwen3 — empty = app default",
             "custom": "empty = app default",
         }
+        if self._mode_key() == "terminal":
+            hints = {
+                "gemini": "e.g. gemini-2.5-pro, gemini-2.5-flash — empty = client default",
+                "qwen": "e.g. qwen3-coder, qwen3-max — empty = client default",
+            }
         self.lbl_model_hint.config(text=hints.get(self._site_key(), ""))
 
         # desktop sub-options
@@ -219,6 +225,22 @@ class App:
                   "Microsoft Store builds may ignore the flag — use the direct-download app.",
                   foreground="#666", wraplength=900, justify="left").grid(
             row=1, column=0, columnspan=5, sticky="w", padx=6, pady=(0, 2))
+
+        # terminal sub-options (official Gemini CLI / Qwen Code clients)
+        self.frame_terminal = ttk.Frame(mid)
+        ttk.Label(self.frame_terminal,
+                  text="Terminal mode drives the official CLI client for the chosen site — "
+                  "one headless call per prompt, fresh session, answer from stdout. "
+                  "This is the native MCP path for Gemini & Qwen (their web products "
+                  "have no MCP attachment).").grid(
+            row=0, column=0, columnspan=3, sticky="w", padx=6, pady=2)
+        ttk.Label(self.frame_terminal,
+                  text="Gemini:  npm install -g @google/gemini-cli   then run `gemini` once and sign in (Google, free)\n"
+                  "Qwen:    npm install -g @qwen-code/qwen-code   then run `qwen` once and sign in (Qwen, free)\n"
+                  "MCP servers from the box below are written to the client's settings file "
+                  "(~/.gemini or ~/.qwen) and scoped per prompt; tool calls auto-approve (CLI: --no-yolo to disable).",
+                  foreground="#666", wraplength=900, justify="left").grid(
+            row=1, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 2))
 
         # manual sub-options
         self.frame_manual = ttk.Frame(mid)
@@ -465,22 +487,41 @@ class App:
 
     def _on_mode_change(self) -> None:
         key = self._mode_key()
+        if not hasattr(self, "frame_terminal"):
+            return
         if key == "browser":
             self.frame_site.grid(row=1, column=0, columnspan=3, sticky="ew")
             self.frame_desktop.grid_forget()
+            self.frame_terminal.grid_forget()
             self.frame_manual.grid_forget()
+            self.cmb_site.config(values=SITES, state="readonly")
         elif key == "desktop":
             self.frame_site.grid(row=1, column=0, columnspan=3, sticky="ew")
             self.frame_desktop.grid(row=2, column=0, columnspan=3, sticky="ew")
+            self.frame_terminal.grid_forget()
             self.frame_manual.grid_forget()
+            self.cmb_site.config(values=SITES, state="readonly")
+        elif key == "terminal":
+            self.frame_site.grid(row=1, column=0, columnspan=3, sticky="ew")
+            self.frame_desktop.grid_forget()
+            self.frame_terminal.grid(row=2, column=0, columnspan=3, sticky="ew")
+            self.frame_manual.grid_forget()
+            cli_sites = [n for n, k in zip(SITES, SITE_KEYS) if k in ("gemini", "qwen")]
+            self.cmb_site.config(values=cli_sites, state="readonly")
+            if self.var_site.get() not in cli_sites:
+                self.var_site.set(cli_sites[0])
         elif key == "manual":
             self.frame_site.grid_forget()
             self.frame_desktop.grid_forget()
+            self.frame_terminal.grid_forget()
             self.frame_manual.grid(row=1, column=0, columnspan=3, sticky="ew")
+            self.cmb_site.config(values=SITES, state="readonly")
         else:
             self.frame_site.grid_forget()
             self.frame_desktop.grid_forget()
+            self.frame_terminal.grid_forget()
             self.frame_manual.grid_forget()
+            self.cmb_site.config(values=SITES, state="readonly")
         self._update_model_hint()
 
     # ------------------------------------------------------------------ #
