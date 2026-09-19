@@ -6,12 +6,11 @@
 
 **No API keys. No extra bills. Just the subscription you already pay for.**
 
-<!-- TODO(owner): replace YOUR-USERNAME below (star-history + CI badge) with your GitHub username -->
 
-[![CI](https://github.com/YOUR-USERNAME/subscription-sweater/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR-USERNAME/subscription-sweater/actions/workflows/ci.yml)
+[![CI](https://github.com/prashant-kotian/subscription-sweater/actions/workflows/ci.yml/badge.svg)](https://github.com/prashant-kotian/subscription-sweater/actions/workflows/ci.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Star History](https://api.star-history.com/svg?repos=YOUR-USERNAME/subscription-sweater&type=Date)](https://star-history.com/#YOUR-USERNAME/subscription-sweater&Date)
+[![Star History](https://api.star-history.com/svg?repos=prashant-kotian/subscription-sweater&type=Date)](https://star-history.com/#prashant-kotian/subscription-sweater&Date)
 
 You already pay for ChatGPT / Claude / Gemini / Qwen. This tool puts that
 subscription on an assembly line: hand it a file of prompts, it drives the LLM
@@ -189,10 +188,10 @@ are very welcome.
 
 <div align="center">
 
-[![Star History Chart](https://api.star-history.com/svg?repos=YOUR-USERNAME/subscription-sweater&type=Date)](https://star-history.com/#YOUR-USERNAME/subscription-sweater&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=prashant-kotian/subscription-sweater&type=Date)](https://star-history.com/#prashant-kotian/subscription-sweater&Date)
 
 Built with 🧶 by people who already pay for their AI.
-<br><sub>Questions, new sites, new fronts: [open an issue](https://github.com/YOUR-USERNAME/subscription-sweater/issues) — they're the fastest way to get a feature.</sub>
+<br><sub>Questions, new sites, new fronts: [open an issue](https://github.com/prashant-kotian/subscription-sweater/issues) — they're the fastest way to get a feature.</sub>
 
 [↑ back to top](#-)
 
