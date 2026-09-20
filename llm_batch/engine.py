@@ -207,7 +207,7 @@ class Engine:
             )
         if cfg.mode == "terminal":
             from . import mcp_config
-            from .cli_bot import CLI_SITES, TerminalCLIBot
+            from .cli_bot import CLI_SITES, TerminalCLIBot, select_client
 
             if cfg.site not in CLI_SITES:
                 raise ToolError(
@@ -216,13 +216,18 @@ class Engine:
                     "use browser or desktop mode; any other app: manual mode.")
             policy = self._policy()
             servers = policy.selected_servers()
+            # Gemini: prefer the current Antigravity CLI (agy), fall back to
+            # the legacy gemini binary; qwen: its own CLI.
+            client = select_client(cfg.site)
             if servers:
-                mcp_config.ensure_cli_mcp_servers(cfg.site, servers, log=self.log)
+                mcp_config.ensure_cli_mcp_servers(client, servers, log=self.log)
             return TerminalCLIBot(
                 site=cfg.site,
+                client=client,
                 yolo=cfg.yolo,
                 new_chat=cfg.new_chat,
                 has_mcp_servers=bool(servers),
+                mcp_servers=servers,
                 max_wait_seconds=cfg.max_wait_seconds,
                 log=self.log,
                 should_stop=self._should_stop,

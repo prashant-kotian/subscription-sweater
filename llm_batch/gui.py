@@ -198,7 +198,8 @@ class App:
         }
         if self._mode_key() == "terminal":
             hints = {
-                "gemini": "e.g. gemini-3.1-pro-preview, gemini-3-flash-preview — empty = client Auto",
+                "gemini": ("agy: `agy models` lists your account's models (Gemini / Claude / "
+                           "gpt-oss) — empty = CLI default (legacy gemini-cli: gemini-3.1-pro-preview …)"),
                 "qwen": "e.g. qwen3-coder-next, qwen3-max — empty = client default",
             }
         self.lbl_model_hint.config(text=hints.get(self._site_key(), ""))

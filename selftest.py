@@ -310,8 +310,44 @@ def test_terminal(tmp: str, txt: str) -> None:
     assert bot_nc_q.build_command("h", PromptDecision(clean_prompt="h"))[-1:] == ["--continue"]
 
     for s in CLI_SITES:
-        assert TerminalCLIBot(site=s, log=quiet).spec["bin"] in ("gemini", "qwen")
+        assert TerminalCLIBot(site=s, log=quiet).spec["bin"] in ("gemini", "qwen", "agy")
     print("  terminal  : command builder (model / mcp scoping / resume)  OK")
+
+    # -- Antigravity CLI (agy): gemini-cli's successor (retired 2026-06-18) -- #
+    bot_agy = TerminalCLIBot(site="gemini", client="agy", new_chat=False, log=quiet)
+    d = PromptDecision(clean_prompt="hello", target_model="gemini-3.5-flash",
+                       mcp=True, mcp_names=["github"])
+    cmd = bot_agy.build_command("hello", d)
+    assert cmd[:3] == ["agy", "-p", "hello"], cmd
+    assert cmd[3:5] == ["--model", "gemini-3.5-flash"], cmd
+    assert ["--output-format", "json"] in [cmd[i:i + 2] for i in range(len(cmd) - 1)], cmd
+    assert "--dangerously-skip-permissions" in cmd and "--yolo" not in cmd, cmd
+    # agy has no allow-list flag — scoping happens via the mcp_config.json toggle
+    assert "--allowed-mcp-server-names" not in cmd, cmd
+    assert cmd[-1:] == ["--continue"], cmd   # official: -c/--continue = most recent
+
+    # per-prompt MCP scoping: enabled run-servers present, the rest absent,
+    # and the user's own servers preserved in both directions
+    home2 = os.path.join(tmp, "fakehome2")
+    cfgdir = os.path.join(home2, ".gemini", "config")
+    os.makedirs(cfgdir, exist_ok=True)
+    cfgp = os.path.join(cfgdir, "mcp_config.json")
+    with open(cfgp, "w", encoding="utf-8") as f:
+        json_mod.dump({"mcpServers": {"mine": {"command": "echo"}}}, f)
+    old_home2 = os.environ.get("HOME")
+    os.environ["HOME"] = home2
+    try:
+        assert mcp_config.cli_settings_path("agy") == os.path.normpath(cfgp), \
+            mcp_config.cli_settings_path("agy")
+        mcp_config.set_cli_mcp_scope("agy", SERVERS, {"github", "files"}, log=quiet)
+        data = json_mod.load(open(cfgp, encoding="utf-8"))
+        assert set(data["mcpServers"]) == {"mine", "github", "files"}, data
+        mcp_config.set_cli_mcp_scope("agy", SERVERS, set(), log=quiet)
+        data = json_mod.load(open(cfgp, encoding="utf-8"))
+        assert set(data["mcpServers"]) == {"mine"}, data  # run servers gone, user's kept
+    finally:
+        os.environ["HOME"] = old_home2
+    print("  terminal  : agy (Antigravity) command + per-prompt MCP scope  OK")
 
     # -- MCP settings merge (fake HOME, never the real one) ------------------ #
     home = os.path.join(tmp, "fakehome")
@@ -351,6 +387,8 @@ def test_terminal(tmp: str, txt: str) -> None:
             TerminalCLIBot(site="gemini", log=quiet).start()
             raise AssertionError("expected ToolError for missing client")
         except ToolError as e:
+            # guides to the CURRENT client (agy) and mentions the legacy fallback
+            assert "antigravity.google/cli/install" in str(e), str(e)
             assert "npm install -g @google/gemini-cli" in str(e), str(e)
     finally:
         os.environ["PATH"] = old_path

@@ -1,8 +1,11 @@
 """Manage MCP server configuration for the clients that read a JSON file:
 
-* Claude *desktop* app  ->  claude_desktop_config.json
-* Gemini CLI (official) ->  ~/.gemini/settings.json   ("mcpServers" + "mcp" keys)
-* Qwen Code (official)  ->  ~/.qwen/settings.json     (same shape)
+* Claude *desktop* app      ->  claude_desktop_config.json
+* Antigravity CLI (agy)     ->  ~/.gemini/config/mcp_config.json   (current
+                                Google CLI; gemini-cli was retired for
+                                individual accounts on 2026-06-18)
+* Gemini CLI (legacy)       ->  ~/.gemini/settings.json
+* Qwen Code (official)      ->  ~/.qwen/settings.json     (same shape)
 
 Gemini and Qwen have no MCP button in their consumer web products, but their
 official open-source CLI clients natively speak MCP: they read an
@@ -39,9 +42,19 @@ def claude_desktop_config_path() -> str | None:
     return None
 
 
-# ------------------------------------------------- official CLI clients ----- #
-#: site key -> (settings path, human name, manager command)
+# --------------------------------------------------------------------------- #
+# Official CLI clients
+# --------------------------------------------------------------------------- #
+#: client key -> (settings path, human name, manager command)
+#:
+#: Gemini has TWO generations of CLI:
+#:   * agy    — Antigravity CLI (Google's current client; the open-source
+#:              gemini-cli was retired for individual accounts on 2026-06-18).
+#:              It reads MCP servers from a standalone profile file.
+#:   * gemini — the legacy open-source CLI (still alive for paid-API-key /
+#:              enterprise installs); reads them from settings.json.
 CLI_SETTINGS = {
+    "agy": ("~/.gemini/config/mcp_config.json", "Antigravity CLI", "agy mcp"),
     "gemini": ("~/.gemini/settings.json", "Gemini CLI", "gemini mcp"),
     "qwen": ("~/.qwen/settings.json", "Qwen Code", "qwen mcp"),
 }
@@ -131,8 +144,9 @@ def ensure_mcp_servers(servers: dict, log=print) -> str | None:
 def ensure_cli_mcp_servers(site: str, servers: dict, log=print) -> str | None:
     """Merge *servers* into the official CLI client's settings file.
 
-    site = "gemini" -> ~/.gemini/settings.json (Gemini CLI)
-    site = "qwen"   -> ~/.qwen/settings.json   (Qwen Code)
+    site = "agy"    -> ~/.gemini/config/mcp_config.json (Antigravity CLI)
+    site = "gemini" -> ~/.gemini/settings.json          (legacy Gemini CLI)
+    site = "qwen"   -> ~/.qwen/settings.json            (Qwen Code)
     The parent folder is created if it doesn't exist yet (the client creates
     the rest on first launch).
     """
@@ -147,3 +161,63 @@ def ensure_cli_mcp_servers(site: str, servers: dict, log=print) -> str | None:
         path, servers, log=log,
         note=f"manage anytime with `{entry[2]} list`; the file is read at client "
              f"startup, so it takes effect from the next prompt")
+
+
+# Paths already backed up in this process (per-prompt scope writes only need
+# one backup of the original — the first merge already made one).
+_SCOPED_PATHS: set = set()
+
+
+def set_cli_mcp_scope(client: str, run_servers: dict, enabled, log=print) -> None:
+    """Per-prompt MCP scoping for clients WITHOUT an allow-list flag.
+
+    The Antigravity CLI (agy) has no `--allowed-mcp-server-names` equivalent,
+    so the run's servers are toggled in the user-level mcp_config.json right
+    before each launch (every `agy -p` is a fresh process that reads the
+    file at startup): the servers the policy turned ON for this prompt are
+    present; all other run servers are absent. Servers the user configured
+    outside this run are preserved untouched, in both directions.
+    """
+    if client != "agy":
+        return
+    run_servers = run_servers or {}
+    if not run_servers:
+        return
+    path = cli_settings_path("agy")
+    if not path:
+        return
+    cfg: dict = {}
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+        except Exception:
+            return
+    if not isinstance(cfg, dict):
+        return
+    ms = cfg.get("mcpServers")
+    if ms is None:
+        ms = cfg["mcpServers"] = {}
+    if not isinstance(ms, dict):
+        return
+    enabled = set(enabled or ())
+    changed = False
+    for name, spec in run_servers.items():
+        if name in enabled:
+            if ms.get(name) != spec:
+                ms[name] = spec
+                changed = True
+        elif name in ms:
+            del ms[name]
+            changed = True
+    if not changed:
+        return
+    try:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        if path not in _SCOPED_PATHS and os.path.exists(path):
+            shutil.copy2(path, f"{path}.bak-{time.strftime('%Y%m%d-%H%M%S')}")
+        _SCOPED_PATHS.add(path)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2)
+    except Exception as e:
+        log(f"  (!) could not write the per-prompt MCP scope: {e}")

@@ -51,7 +51,7 @@ the app, paste, wait, copy — but a thousand times over, unattended:
   |---|---|---|
   | **Browser automation** | Drives its own Chromium window on ChatGPT / Claude / Gemini / Qwen. Login once, remembered forever. | unattended batches |
   | **Desktop app automation** | Attaches to the **official ChatGPT / Claude desktop app** (CDP) and runs the same automation inside it. | you live in the desktop app |
-  | **Terminal (CLI)** | Drives the **official Gemini CLI / Qwen Code** clients headless (`gemini -p "…"` / `qwen -p "…"`), one call per prompt — and it's the **native MCP path for Gemini & Qwen** (their web products have no MCP attachment at all). | unattended Gemini/Qwen batches **with real MCP tools** |
+  | **Terminal (CLI)** | Drives the **official Antigravity CLI (`agy`, Google's successor to the retired Gemini CLI) / Qwen Code** headless (`agy -p "…"` / `qwen -p "…"`), one call per prompt — and it's the **native MCP path for Gemini & Qwen** (their web products have no MCP attachment at all). | unattended Gemini/Qwen batches **with real MCP tools** |
   | **Manual paste** | The tool pastes the prompt and copies the answer *for you*; you click two buttons per prompt (auto window-focus by title). | **any** LLM app that has no other option |
   | **Mock** | No browser, no LLM — fake answers. | test files/settings for free |
 
@@ -60,9 +60,10 @@ the app, paste, wait, copy — but a thousand times over, unattended:
 - **Tool control (web search / MCP / skills)** — per run *and per prompt*:
   force ON/OFF, allow/deny specific MCP servers, attach skills, and **connect
   any MCP server** (paste its JSON — it's written into the right client
-  automatically, original backed up: Claude desktop config, `~/.gemini/` for
-  Gemini CLI, `~/.qwen/` for Qwen Code — and each prompt is scoped to exactly
-  the servers it's allowed to use).
+  automatically, original backed up: Claude desktop config,
+  `~/.gemini/config/mcp_config.json` for Antigravity CLI,
+  `~/.gemini/settings.json` for legacy Gemini CLI, `~/.qwen/` for Qwen Code —
+  and each prompt is scoped to exactly the servers it's allowed to use).
 - **Attach chart images automatically** — name them after the prompt ID and
   the tool clicks the paperclip for you (vision questions included).
 - **Understands benchmark sheets** — files wrapped in
@@ -104,24 +105,29 @@ Upload prompts (+ chart images) · pick mode/site/model · flip the toggles ·
 |---|---|---|---|---|
 | **ChatGPT** | ✅ | ✅ | — | model picker, Web toggle, image attach |
 | **Claude** | ✅ | ✅ | — | model picker, Research toggle, MCP config merge, image attach |
-| **Gemini** | ✅ | — | ✅ | browser: model picker + image attach · **CLI: native MCP** (`gemini -p`, `~/.gemini/settings.json`) |
+| **Gemini** | ✅ | — | ✅ | browser: model picker + image attach · **CLI: native MCP** (`agy -p`, Antigravity CLI — auto-detected, falls back to legacy `gemini`) |
 | **Qwen** | ✅ | — | ✅ | browser: chat.qwen.ai · **CLI: native MCP** (`qwen -p`, `~/.qwen/settings.json`) |
 | **Any other URL** | ✅ (custom URL) | — | — | generic selectors + `--debug` dumps to teach it |
 | **Any app, anywhere** | ✅ (manual mode) | — | — | paste/copy on your behalf |
 
-**Terminal mode in 3 commands** (free login, no API key — Node.js 18+):
+**Terminal mode in 3 commands** (free login, no API key):
 
-```bash
-npm install -g @google/gemini-cli        # Gemini  (or: brew install gemini-cli)
-gemini                                    # once: sign in with your Google account
+```powershell
+# Gemini — Antigravity CLI (agy): Google retired the open-source gemini-cli
+# for individual accounts on 2026-06-18; agy is the successor (Go binary,
+# reuses your ~/.gemini login). No Node.js needed.
+irm https://antigravity.google/cli/install.ps1 | iex     # macOS/Linux: curl -fsSL https://antigravity.google/cli/install.sh | bash
+agy                                                      # once: sign in with your Google account
 python main.py --mode terminal --site gemini -i prompts.txt -o answers.txt
 ```
 
 Qwen Code works the same way: `npm install -g @qwen-code/qwen-code` → sign in
-with your Qwen account once → `--mode terminal --site qwen`. Your MCP servers
-(pasted in the UI or `--mcp-json`) are merged into the client's settings file
-with a timestamped backup, then scoped **per prompt** — a prompt with MCP off
-literally can't call an MCP tool (`--allowed-mcp-server-names` allow-list).
+with your Qwen account once → `--mode terminal --site qwen` (Node.js 18+).
+Your MCP servers (pasted in the UI or `--mcp-json`) are merged into the
+client's config file with a timestamped backup, then scoped **per prompt** —
+a prompt with MCP off literally can't call an MCP tool (gemini/qwen:
+`--allowed-mcp-server-names` allow-list; agy: the run's servers are toggled
+in `mcp_config.json` before each launch — it has no allow-list flag).
 
 If a site redesigns a button, run once with `--debug`: screenshots + HTML land
 in `debug/`, and the exact selector goes into the 20-line table at the top of
@@ -155,12 +161,13 @@ web", "latest", "today's price"…) / Always / Never · MCP Never / Auto / Alway
 allowed & denied server lists · skills.
 
 Enforced three ways: the site's own **UI toggle** (only when its state can be
-read), **MCP config** (Claude desktop / Gemini CLI / Qwen Code — with backup),
-a per-prompt **CLI allow-list** in terminal mode
-(`--allowed-mcp-server-names`, so a prompt with MCP off can't call any tool),
-and an explicit **instruction line** appended to the prompt — so "never use web
-search" is honoured in *every* client, and the log prints the resolved decision
-per prompt: `tools: web=off  mcp=ON(github)  model=GPT-5`.
+read), **MCP config** (Claude desktop / Antigravity CLI / legacy Gemini CLI /
+Qwen Code — with backup), a per-prompt **MCP scope** in terminal mode
+(`--allowed-mcp-server-names` allow-list for gemini/qwen; a per-launch
+`mcp_config.json` toggle for agy — so a prompt with MCP off can't call any
+tool), and an explicit **instruction line** appended to the prompt — so
+"never use web search" is honoured in *every* client, and the log prints the
+resolved decision per prompt: `tools: web=off  mcp=ON(github)  model=GPT-5`.
 
 **Known gap: ChatGPT + *local* MCP.** ChatGPT's web MCP connectors only accept
 **public HTTPS endpoints** — attaching your own local stdio server would need
