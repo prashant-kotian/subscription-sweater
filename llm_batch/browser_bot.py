@@ -83,8 +83,14 @@ SITES = {
     "claude": {
         "name": "Claude",
         "url": "https://claude.ai/",
+        # Real, live-verified 2026-09-20: the input is a Tiptap/ProseMirror
+        # contenteditable div with aria-label "Write your prompt to Claude"
+        # (no data-placeholder attribute -- the old primary selector never
+        # matched and every run fell through to the generic contenteditable
+        # fallback).
         "inputs": [
-            'div[contenteditable="true"][data-placeholder]',
+            'div[aria-label="Write your prompt to Claude"]',
+            'div.tiptap.ProseMirror[contenteditable="true"]',
             'div[contenteditable="true"]',
             "textarea",
         ],
@@ -93,10 +99,14 @@ SITES = {
             'button[aria-label^="Send"]',
             'button[aria-label^="send"]',
         ],
+        # Real, live-verified 2026-09-20: none of the previous three
+        # selectors (data-message-id, message-group, .markdown) matched
+        # anything on the real page -- the actual answer container class is
+        # .font-claude-response. See the row-start-2 handling in
+        # _last_answer_text() for the thinking-trace-contamination fix that
+        # goes with this selector.
         "answers": [
-            'div[data-message-id]',
-            "div.message-group",
-            "div.markdown",
+            "div.font-claude-response",
         ],
         "new_chat": [
             'a[href="/new"]',
@@ -604,16 +614,19 @@ class PageChatBot:
                                 t = (el.inner_text() or "").strip().lower()
                             except Exception:
                                 continue
-                            # Real, confirmed menu text on Gemini (2026-09-20):
-                            # "Upload files" -- a two-word label the old exact-
-                            # match list never matched. Keep the original
-                            # single-word exact matches for other sites, and
-                            # ADD a targeted "upload" substring check (not a
-                            # broader "file"/"image"/"photo" substring check,
-                            # which would wrongly match real sibling menu
-                            # items like "Create image" or "Add from Drive").
-                            if t in ("photos", "photo", "files", "file", "images",
-                                     "upload") or "upload" in t:
+                            # Real, confirmed menu text (2026-09-20): Gemini
+                            # uses "Upload files"; Claude uses "Add files or
+                            # photos" -- neither matched the old exact-word-
+                            # only list. Keep the original single-word exact
+                            # matches for other sites, and ADD "upload"/
+                            # "file"/"photo" as substring checks (checked,
+                            # live, against every menu item on both sites --
+                            # no sibling item like "Create image", "Add from
+                            # Drive", "Take a screenshot", "Add to project",
+                            # or "Connectors" contains any of these words).
+                            if (t in ("photos", "photo", "files", "file", "images",
+                                      "upload")
+                                    or "upload" in t or "file" in t or "photo" in t):
                                 el.click()
                                 break
                     except Exception:
@@ -764,7 +777,19 @@ class PageChatBot:
                 try:
                     if not el.is_visible():
                         continue
-                    t = (el.inner_text() or "").strip()
+                    # Real, confirmed issue (2026-09-20): Claude's answer
+                    # container (.font-claude-response) has the collapsed
+                    # "thinking" trace as one grid row (row-start-1) and the
+                    # actual reply as a sibling row (row-start-2) -- both are
+                    # descendants of the same matched element, so a plain
+                    # inner_text() concatenates the thinking-trace text in
+                    # front of the real answer on every single response.
+                    # Prefer the row-start-2 sub-element's text when present.
+                    body = el.locator('[class*="row-start-2"]')
+                    if body.count() > 0:
+                        t = (body.first.inner_text() or "").strip()
+                    else:
+                        t = (el.inner_text() or "").strip()
                 except Exception:
                     continue
                 if not t:
