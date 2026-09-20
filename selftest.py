@@ -277,7 +277,12 @@ def test_terminal(tmp: str, txt: str) -> None:
     quiet = lambda *a, **k: None  # noqa: E731
 
     # -- build_command: exact argv per policy decision ----------------------- #
-    bot = TerminalCLIBot(site="gemini", log=quiet)
+    # client="gemini" pinned explicitly: select_client() auto-detects agy
+    # over legacy gemini when agy is installed (the real, expected state on
+    # most machines now that gemini-cli is EOL for individuals) -- these
+    # assertions are specifically about the legacy gemini spec, so they must
+    # not silently test whatever the running machine happens to have on PATH.
+    bot = TerminalCLIBot(site="gemini", client="gemini", log=quiet)
     d = PromptDecision(clean_prompt="hello")
     cmd = bot.build_command("hello", d)
     assert cmd[:3] == ["gemini", "-p", "hello"] and "--yolo" in cmd, cmd
@@ -291,7 +296,7 @@ def test_terminal(tmp: str, txt: str) -> None:
     assert cmd[i + 1] == "github" and cmd.count("--allowed-mcp-server-names") == 2, cmd
 
     # mcp=OFF prompt in a run that HAS servers → allow-list matches nothing
-    bot_srv = TerminalCLIBot(site="gemini", has_mcp_servers=True, log=quiet)
+    bot_srv = TerminalCLIBot(site="gemini", client="gemini", has_mcp_servers=True, log=quiet)
     d = PromptDecision(clean_prompt="hello", mcp=False)
     cmd = bot_srv.build_command("hello", d)
     i = cmd.index("--allowed-mcp-server-names")
@@ -304,7 +309,7 @@ def test_terminal(tmp: str, txt: str) -> None:
     # resume flag is real and site-specific: gemini's --resume documents
     # "latest" as a special value; qwen's --resume takes a real session ID
     # with no such case, so qwen uses the separate --continue flag instead.
-    bot_nc_g = TerminalCLIBot(site="gemini", new_chat=False, log=quiet)
+    bot_nc_g = TerminalCLIBot(site="gemini", client="gemini", new_chat=False, log=quiet)
     assert bot_nc_g.build_command("h", PromptDecision(clean_prompt="h"))[-2:] == ["--resume", "latest"]
     bot_nc_q = TerminalCLIBot(site="qwen", new_chat=False, log=quiet)
     assert bot_nc_q.build_command("h", PromptDecision(clean_prompt="h"))[-1:] == ["--continue"]
@@ -335,8 +340,13 @@ def test_terminal(tmp: str, txt: str) -> None:
     cfgp = os.path.join(cfgdir, "mcp_config.json")
     with open(cfgp, "w", encoding="utf-8") as f:
         json_mod.dump({"mcpServers": {"mine": {"command": "echo"}}}, f)
-    old_home2 = os.environ.get("HOME")
+    # Windows' expanduser("~") reads USERPROFILE, not HOME -- both must be
+    # faked (same pattern as the gemini MCP-merge block below) or this
+    # silently resolves against the REAL home directory on Windows.
+    old_home2 = os.environ.get("HOME"), os.environ.get("USERPROFILE")
     os.environ["HOME"] = home2
+    if old_home2[1]:
+        os.environ["USERPROFILE"] = home2
     try:
         assert mcp_config.cli_settings_path("agy") == os.path.normpath(cfgp), \
             mcp_config.cli_settings_path("agy")
@@ -347,7 +357,9 @@ def test_terminal(tmp: str, txt: str) -> None:
         data = json_mod.load(open(cfgp, encoding="utf-8"))
         assert set(data["mcpServers"]) == {"mine"}, data  # run servers gone, user's kept
     finally:
-        os.environ["HOME"] = old_home2
+        os.environ["HOME"] = old_home2[0]
+        if old_home2[1]:
+            os.environ["USERPROFILE"] = old_home2[1]
     print("  terminal  : agy (Antigravity) command + per-prompt MCP scope  OK")
 
     # -- Codex CLI (OpenAI): site chatgpt -> `codex exec` --------------------- #
@@ -388,8 +400,10 @@ def test_terminal(tmp: str, txt: str) -> None:
     with open(cp, "w", encoding="utf-8") as f:
         f.write('# user comment that must survive\nmodel = "gpt-5.6"\n\n'
                 '[mcp_servers.mine]\ncommand = "echo"\n')
-    old_home_cx = os.environ.get("HOME")
+    old_home_cx = os.environ.get("HOME"), os.environ.get("USERPROFILE")
     os.environ["HOME"] = home_cx
+    if old_home_cx[1]:
+        os.environ["USERPROFILE"] = home_cx
     try:
         assert mcp_config.cli_settings_path("codex") == os.path.normpath(cp)
         mcp_config.ensure_cli_mcp_servers("codex", SERVERS, log=quiet)
@@ -411,7 +425,9 @@ def test_terminal(tmp: str, txt: str) -> None:
         text2 = open(cp, encoding="utf-8").read()
         assert text2.count("[mcp_servers.github]") == 1, "no duplicate sections"
     finally:
-        os.environ["HOME"] = old_home_cx
+        os.environ["HOME"] = old_home_cx[0]
+        if old_home_cx[1]:
+            os.environ["USERPROFILE"] = old_home_cx[1]
     print("  terminal  : codex config.toml merge (append-only + backup)  OK")
 
     # -- Claude Code: site claude -> `claude -p`, strict per-launch mcp file -- #
@@ -420,8 +436,10 @@ def test_terminal(tmp: str, txt: str) -> None:
     # the user's own server in ~/.claude.json must survive into the strict file
     with open(os.path.join(home_cc, ".claude.json"), "w", encoding="utf-8") as f:
         json_mod.dump({"other": 1, "mcpServers": {"mine": {"command": "echo"}}}, f)
-    old_home_cc = os.environ.get("HOME")
+    old_home_cc = os.environ.get("HOME"), os.environ.get("USERPROFILE")
     os.environ["HOME"] = home_cc
+    if old_home_cc[1]:
+        os.environ["USERPROFILE"] = home_cc
     try:
         bot_cc = TerminalCLIBot(site="claude", mcp_servers=SERVERS,
                                 new_chat=False, log=quiet)
@@ -445,7 +463,9 @@ def test_terminal(tmp: str, txt: str) -> None:
         data = json_mod.load(open(mcp_file, encoding="utf-8"))
         assert set(data["mcpServers"]) == {"mine"}, data
     finally:
-        os.environ["HOME"] = old_home_cc
+        os.environ["HOME"] = old_home_cc[0]
+        if old_home_cc[1]:
+            os.environ["USERPROFILE"] = old_home_cc[1]
     print("  terminal  : claude (Claude Code) command + strict mcp file  OK")
 
     # -- MCP settings merge (fake HOME, never the real one) ------------------ #
