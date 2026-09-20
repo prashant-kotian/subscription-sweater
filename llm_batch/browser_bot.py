@@ -29,7 +29,7 @@ import sys
 import time
 import urllib.request
 
-from .errors import InputError, LoginError, PromptError, Stopped
+from .errors import InputError, LoginError, PromptError, Stopped, ToolError
 
 # --------------------------------------------------------------------------- #
 # Per-site selector lists (shared by the web UIs and the desktop apps, which
