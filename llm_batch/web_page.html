@@ -123,6 +123,9 @@
       <label>Custom URL</label>
       <input type="text" id="customUrl" placeholder="https://…">
     </div>
+    <div id="browserRow" style="display:none">
+      <label class="check"><input type="checkbox" id="headless"> run headless (no visible window — log in once with this unchecked first, the session is remembered in browser_profile/)</label>
+    </div>
     <div id="desktopRow" style="display:none" class="row">
       <div><label>App executable (empty = auto-detect)</label><input type="text" id="deskExe"></div>
       <div><label>Debug port</label><input type="number" id="deskPort" value="9222"></div>
@@ -298,6 +301,7 @@ function syncMode() {
   $("desktopRow").style.display = m === "desktop" ? "" : "none";
   $("manualRow").style.display = m === "manual" ? "" : "none";
   $("customUrlRow").style.display = ($("site").value === "custom" && m === "browser") ? "" : "none";
+  $("browserRow").style.display = m === "browser" ? "" : "none";
   $("imgNote").style.display = m === "terminal" ? "" : "none";
   $("modelSel").placeholder = (m === "terminal" ? TERMINAL_HINTS[$("site").value] : MODEL_HINTS[$("site").value]) || "e.g. GPT-5";
 }
@@ -356,7 +360,7 @@ $("btnStart").onclick = async () => {
   }
   const body = {
     mode: $("mode").value, site: $("site").value, custom_url: $("customUrl").value,
-    model: $("modelSel").value,
+    model: $("modelSel").value, headless: $("headless").checked,
     desktop_exe: $("deskExe").value, desktop_port: num("deskPort", 9222),
     focus_window: $("focusWin").value, timer_seconds: num("timer", 0),
     auto_send: $("autoSend").checked, output_format: $("fmt").value,

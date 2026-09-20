@@ -54,9 +54,13 @@ SITES = {
             "main div.markdown",
             "main [class*='message']",
         ],
+        # Real, live-verified 2026-09-21: the sidebar "New chat" link is
+        # a[href="/"] with data-testid="create-new-chat-button" -- href="/new"
+        # and testid="new-chat-button" (the old primary selectors) match
+        # nothing on the real page.
         "new_chat": [
-            'a[href="/new"]',
-            'button[data-testid="new-chat-button"]',
+            'a[data-testid="create-new-chat-button"]',
+            'a[href="/"]',
             'div[aria-label="New chat"]',
             'a[aria-label="New chat"]',
         ],
@@ -71,10 +75,14 @@ SITES = {
             'button[aria-label*="Model"]',
             'div[aria-label*="Model"]',
         ],
+        # Real, live-verified 2026-09-21: the "+" composer button's real
+        # aria-label is "Add files and more" with data-testid
+        # "composer-plus-btn" -- none of the previous four selectors
+        # ("Attach", "Attach files", "Photo", "attachment") matched it.
         "attach": [
+            '[data-testid="composer-plus-btn"]',
+            'button[aria-label*="Add files"]',
             'button[aria-label*="Attach"]',
-            '[aria-label*="Attach files"]',
-            'button[aria-label*="Photo"]',
             '[data-testid*="attachment"]',
         ],
         "model_hints": "e.g. GPT-5, GPT-4o, o3, o4-mini",
@@ -955,12 +963,45 @@ class BrowserBot(PageChatBot):
         from playwright.sync_api import sync_playwright
 
         self._pw = sync_playwright().start()
+        # Real, confirmed issue (2026-09-21): Chromium's actual --headless
+        # mode is detected and hard-blocked by ChatGPT's and Claude's
+        # Cloudflare bot-check ("Just a moment..." never resolves, confirmed
+        # stuck 15s+ with a valid logged-in profile) -- --disable-blink-
+        # features=AutomationControlled does not help, because the block is
+        # on the headless renderer itself, not on navigator.webdriver.
+        # A real (headed) Chromium window positioned off any physical screen
+        # has the exact same fingerprint as an on-screen window (confirmed:
+        # loads chatgpt.com/claude.ai cleanly) while showing nothing to the
+        # user -- so "headless" here means "off-screen headed", not the
+        # native headless flag, for every site (Gemini has no such block but
+        # this is harmless and simpler than branching per site).
+        launch_kwargs = dict(
+            headless=False,
+            args=["--disable-blink-features=AutomationControlled"],
+        )
+        if self.headless:
+            launch_kwargs["args"] = launch_kwargs["args"] + [
+                "--window-position=-32000,-32000",
+                "--window-size=1350,950",
+                # Chrome treats an off-screen window as occluded and applies
+                # the same throttling it uses for background tabs (paused/
+                # slowed timers, delayed rendering) -- confirmed real: three
+                # different sites all had answer-streaming stall out and
+                # never stabilize with only the window-position flags above.
+                # These are the standard mitigations used by browser
+                # automation farms for exactly this "invisible window"
+                # throttling.
+                "--disable-backgrounding-occluded-windows",
+                "--disable-renderer-backgrounding",
+                "--disable-background-timer-throttling",
+            ]
+            launch_kwargs["no_viewport"] = True
+        else:
+            launch_kwargs["viewport"] = {"width": 1350, "height": 950}
         try:
             self.context = self._pw.chromium.launch_persistent_context(
                 self.profile_dir,
-                headless=self.headless,
-                viewport={"width": 1350, "height": 950},
-                args=["--disable-blink-features=AutomationControlled"],
+                **launch_kwargs,
             )
         except Exception as e:
             try:
