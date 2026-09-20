@@ -5,6 +5,7 @@ browser_profile/
 debug/
 web_uploads/
 web_outputs/
+runs_log/
 settings.json
 *.bak
 .DS_Store

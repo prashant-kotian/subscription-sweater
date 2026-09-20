@@ -149,9 +149,13 @@ SITES = {
         ],
         "web_toggle": [],  # Gemini's search toggle lives inside a menu —
         # handled via the text instruction instead
-        "model_picker": [],  # model picker found via the generic scan below
+        # Real, live-verified 2026-09-20 (both a personal-Chrome session and
+        # this tool's own automated profile): the mode/model picker's real
+        # aria-label is "Open mode picker, currently <Mode>" -- the generic
+        # scan alone was never finding it.
+        "model_picker": ['[aria-label^="Open mode picker"]'],
         "attach": ['[aria-label*="Upload"]', '[aria-label*="Attach"]'],
-        "model_hints": "e.g. Gemini 2.5 Pro",
+        "model_hints": "e.g. gemini-3.1-pro-preview, gemini-3-flash-preview",
         "login_markers": ["sign in", "create an account", "accounts.google"],
     },
     "qwen": {
@@ -251,6 +255,20 @@ class PageChatBot:
             if self.should_stop():
                 raise Stopped()
             if self._find_input():
+                # Real, confirmed issue (2026-09-20): some SPAs (Gemini
+                # included) render a bare, fully-functional input box BEFORE
+                # the rest of the app shell (sidebar, new-chat button, model
+                # picker) finishes mounting -- declaring "ready" the instant
+                # the input appears meant every subsequent new-chat/model-
+                # picker/attach lookup ran against an incomplete page and
+                # silently found nothing. Real, timed, live measurement on
+                # Gemini across repeated runs: the input renders within ~1s
+                # but the new-chat/attach buttons don't exist until
+                # ~5.4-5.5s, with real run-to-run jitter right at that
+                # boundary. 7s clears the measured worst case with margin.
+                self.page.wait_for_timeout(7000)
+                if not self._find_input():
+                    continue
                 self.log("Ready — prompt box found.")
                 return
             if time.time() - last_wall_msg > 8:
@@ -345,10 +363,20 @@ class PageChatBot:
         for sel in self.cfg["new_chat"]:
             try:
                 loc = self.page.locator(sel)
-                if loc.count() == 0:
-                    continue
-                el = loc.first
-                if el.is_visible():
+                n = loc.count()
+                # A selector can legitimately match more than one element (e.g.
+                # Gemini's own "New chat" aria-label appears on both a hidden
+                # decorative link and the real, visible sidebar button) --
+                # .first is DOM order, not visibility order, so blindly trusting
+                # it can silently grab the wrong (invisible) one even though a
+                # real match exists right after it. Scan all matches instead.
+                for i in range(min(n, 10)):
+                    el = loc.nth(i)
+                    try:
+                        if not el.is_visible():
+                            continue
+                    except Exception:
+                        continue
                     el.click()
                     self.page.wait_for_timeout(2000)
                     self._wait_input(8000)
@@ -533,10 +561,21 @@ class PageChatBot:
                 opened = False
                 for sel in self.cfg.get("attach", []):
                     try:
-                        loc = self.page.locator(sel).first
-                        if loc.is_visible(timeout=400):
-                            loc.click()
+                        loc = self.page.locator(sel)
+                        # same "don't trust .first over visibility" fix as
+                        # _new_chat -- a selector can match a hidden decoy
+                        # before the real, visible button.
+                        for i in range(min(loc.count(), 10)):
+                            cand = loc.nth(i)
+                            try:
+                                if not cand.is_visible(timeout=400):
+                                    continue
+                            except Exception:
+                                continue
+                            cand.click()
                             opened = True
+                            break
+                        if opened:
                             break
                     except Exception:
                         continue
@@ -565,8 +604,16 @@ class PageChatBot:
                                 t = (el.inner_text() or "").strip().lower()
                             except Exception:
                                 continue
+                            # Real, confirmed menu text on Gemini (2026-09-20):
+                            # "Upload files" -- a two-word label the old exact-
+                            # match list never matched. Keep the original
+                            # single-word exact matches for other sites, and
+                            # ADD a targeted "upload" substring check (not a
+                            # broader "file"/"image"/"photo" substring check,
+                            # which would wrongly match real sibling menu
+                            # items like "Create image" or "Add from Drive").
                             if t in ("photos", "photo", "files", "file", "images",
-                                     "upload"):
+                                     "upload") or "upload" in t:
                                 el.click()
                                 break
                     except Exception:
@@ -644,6 +691,19 @@ class PageChatBot:
         last_text = ""
         stable_since = None
         last_progress_log = 0.0
+        # Real, confirmed issue (2026-09-20): Gemini's "thinking" phase shows
+        # short status labels ("Initiating Image Analysis", "Refining Visual
+        # Readings", each followed by a literal "Gemini said" fragment) that
+        # can sit motionless long enough to satisfy the stability window --
+        # and this was observed coming through BOTH the diff fallback AND a
+        # real selector match (message-content is reused for status text
+        # too), so source alone doesn't distinguish real vs transient.
+        # A genuine answer to a real question has real sentence structure;
+        # a short, unpunctuated, title-case-y label does not -- use that
+        # shape as the signal instead, with a time-boxed grace period so a
+        # genuinely short real answer still gets accepted eventually rather
+        # than waiting the full timeout.
+        grace_deadline = start + max(self.max_wait_seconds * 0.6, self.max_wait_seconds - 30)
         while True:
             if self.should_stop():
                 raise Stopped()
@@ -657,7 +717,8 @@ class PageChatBot:
                     last_progress_log = now
             elif (text and stable_since is not None
                   and (now - stable_since) >= self.stable_seconds
-                  and len(text) >= self.min_answer_chars):
+                  and len(text) >= self.min_answer_chars
+                  and (not self._looks_like_status_label(text) or now >= grace_deadline)):
                 self.log(f"  (answer stable after {now - start:.0f}s — captured)")
                 return text.strip()
             if now - start > self.max_wait_seconds:
@@ -670,6 +731,25 @@ class PageChatBot:
                     "(check the debug dump / that the prompt was actually sent)."
                 )
             self.page.wait_for_timeout(700)
+
+    _STATUS_LABEL_RE = re.compile(
+        r"^[A-Z][A-Za-z0-9 ,\-']{2,60}(\n.{0,40})?$"
+    )
+
+    @classmethod
+    def _looks_like_status_label(cls, text: str) -> bool:
+        """True for a short, unpunctuated, title-case-y phrase -- the shape
+        of a transient "thinking" status label (e.g. "Initiating Image
+        Analysis\nGemini said"), not a real answer to a real question. Real
+        answers contain actual sentence punctuation or structure; a bare
+        short label doesn't. Deliberately shape-based, not text-specific, so
+        it generalizes beyond the exact labels observed on Gemini."""
+        t = text.strip()
+        if len(t) > 100:
+            return False
+        if any(c in t for c in ".?!{}:"):
+            return False
+        return bool(cls._STATUS_LABEL_RE.match(t))
 
     def _last_answer_text(self, prompt: str) -> str:
         norm_prompt = self._prompt_norm
@@ -694,6 +774,13 @@ class PageChatBot:
                 if norm_prompt and len(norm_prompt) > 40 and t.startswith(norm_prompt[:80]):
                     continue
                 return t
+        # Real, confirmed issue (2026-09-20): for a slower/"thinking" answer
+        # (e.g. a vision question), the real answer container doesn't exist
+        # yet for many seconds -- during that gap this diff fallback can
+        # latch onto a transient status label that happens to sit still for
+        # the full stability window. _wait_for_answer's own shape-based
+        # status-label check (not a source check -- the same transient text
+        # can also leak through a real selector match) guards against this.
         diff = self._page_diff()
         if diff and not self._diff_logged:
             self.log("  (site selectors found no answer — capturing via page-text diff)")
