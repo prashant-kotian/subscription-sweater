@@ -80,6 +80,12 @@
       <label style="margin:0">Chart images (optional — auto-attached by ID, e.g. GZ-15_chart.png → GZ-15)</label>
       <input type="file" id="images" multiple accept=".png,.jpg,.jpeg,.webp,.gif,.bmp"
              style="font-size:12px;color:var(--dim)">
+      <div id="imgNote" style="margin-top:6px;color:var(--dim);font-size:12px;display:none">
+        <b>Terminal mode:</b> no upload needed — the CLI runs on this machine and reads
+        files itself. Paste the image's location in the prompt:
+        <code style="color:var(--text)">@@image: H:\CodeProjects\...\GZ-15_chart.png</code>
+        (one per prompt; Codex attaches it natively, the others read the file path).
+      </div>
     </div>
     <div id="fileInfo" style="margin-top:8px;color:var(--dim);font-size:12.5px"></div>
     <div id="preview"></div>
@@ -91,7 +97,7 @@
     <select id="mode">
       <option value="browser">Browser automation (ChatGPT / Claude / Gemini / Qwen)</option>
       <option value="desktop">Desktop app (ChatGPT / Claude desktop)</option>
-      <option value="terminal">Terminal (CLI) — Gemini / Qwen official clients (native MCP)</option>
+      <option value="terminal">Terminal (CLI) — ChatGPT (Codex) / Gemini (Antigravity) / Claude (Claude Code) / Qwen — native MCP</option>
       <option value="manual">Manual paste (any app — you click 2 buttons per prompt)</option>
       <option value="mock">Mock (offline self-test — fake answers, no account)</option>
     </select>
@@ -169,7 +175,7 @@
     </div>
     <label class="check"><input type="checkbox" id="inject" checked> append tool instructions to each prompt</label>
     <label class="check"><input type="checkbox" id="directives" checked> honor @@ directives inside the prompt file</label>
-    <label>MCP servers (JSON — auto-connected: Claude in desktop/manual mode, Gemini/Qwen via their official CLI in terminal mode)</label>
+    <label>MCP servers (JSON — auto-connected: Claude desktop (desktop mode) · Codex / Antigravity / Claude Code / Qwen CLIs (terminal mode))</label>
     <textarea id="mcpJson" class="mono" rows="3"
       placeholder='{"github": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"]}}'></textarea>
   </div>
@@ -271,9 +277,11 @@ const MODEL_HINTS = {
   qwen: "e.g. Qwen3-Max, Qwen3.5, Qwen-Long",
   custom: "model name, or empty",
 };
-const TERMINAL_SITES = ["gemini", "qwen"];
+const TERMINAL_SITES = ["chatgpt", "gemini", "claude", "qwen"];
 const TERMINAL_HINTS = {
-  gemini: "e.g. gemini-3.1-pro-preview, gemini-3-flash-preview",
+  chatgpt: "Codex CLI: e.g. gpt-5.6 — empty = account default",
+  gemini: "Antigravity (agy): e.g. gemini-3-pro — `agy models` lists your account's models",
+  claude: "Claude Code: e.g. opus, claude-opus-4-8 — empty = account default",
   qwen: "e.g. qwen3-coder-next, qwen3-max",
 };
 function syncMode() {
@@ -290,6 +298,7 @@ function syncMode() {
   $("desktopRow").style.display = m === "desktop" ? "" : "none";
   $("manualRow").style.display = m === "manual" ? "" : "none";
   $("customUrlRow").style.display = ($("site").value === "custom" && m === "browser") ? "" : "none";
+  $("imgNote").style.display = m === "terminal" ? "" : "none";
   $("modelSel").placeholder = (m === "terminal" ? TERMINAL_HINTS[$("site").value] : MODEL_HINTS[$("site").value]) || "e.g. GPT-5";
 }
 $("mode").onchange = syncMode;

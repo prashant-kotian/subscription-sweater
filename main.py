@@ -49,8 +49,9 @@ def build_parser() -> argparse.ArgumentParser:
                    default="browser",
                    help="browser = drive the chat site in Chromium; "
                         "desktop = drive the ChatGPT/Claude desktop app; "
-                        "terminal = drive the official Gemini CLI / Qwen Code "
-                        "(site gemini|qwen — their native MCP path); "
+                        "terminal = drive the official CLI for the site "
+                        "(chatgpt=Codex, gemini=Antigravity/agy, claude=Claude "
+                        "Code, qwen=Qwen Code — their native MCP path); "
                         "manual = you focus the app, tool pastes/copies; "
                         "mock = offline self-test with fake answers")
     p.add_argument("--site", choices=["chatgpt", "claude", "gemini", "qwen", "custom"],

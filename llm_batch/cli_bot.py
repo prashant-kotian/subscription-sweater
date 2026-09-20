@@ -1,37 +1,54 @@
-"""Terminal (CLI) bot: drive the official Google / Qwen CLI clients.
+"""Terminal (CLI) bot: drive the official subscription CLI clients.
 
-Gemini and Qwen ship NO MCP attachment in their consumer web products — but
-their official CLI clients natively speak MCP. Terminal mode is the bridge:
+Terminal mode = no API key, no extra bill — the run is driven through the
+user's own subscription inside the vendor's official CLI:
 
-* one headless call per prompt:  agy -p "…"  /  gemini -p "…"  /  qwen -p "…"
-* each call is a FRESH session (equivalent to "new chat" ON); with
-  --no-new-chat the bot passes the client's own "continue most recent
-  session" flag so prompts share a session (agy: --continue;
-  legacy gemini: --resume latest; qwen: --continue — qwen's own --resume
-  takes a real session ID with no "latest" special case, unlike gemini's)
-* MCP servers are written into the client's config by the engine before the
-  run (mcp_config.ensure_cli_mcp_servers) and then SCOPED PER PROMPT:
-    - gemini / qwen: --allowed-mcp-server-names allow-list (a prompt with
-      mcp=OFF gets an allow-list that matches nothing, so it really has no
-      MCP tools)
-    - agy (Antigravity CLI, no allow-list flag): the run's servers are
-      toggled in ~/.gemini/config/mcp_config.json before each launch
+  site      client          binary    model example
+  chatgpt   Codex CLI       codex     GPT-5.6        (OpenAI)
+  gemini    Antigravity CLI agy       Gemini Pro     (Google; legacy `gemini`
+                                                    binary is the fallback)
+  claude    Claude Code     claude    Claude Opus    (Anthropic)
+  qwen      Qwen Code       qwen      Qwen3          (Alibaba)
+
+Mechanics:
+
+* one headless call per prompt, each call a FRESH process (that IS a "new
+  chat"). With new_chat=OFF the client's own "continue the most recent
+  session" feature is used so prompts share a conversation:
+    agy: --continue · gemini: --resume latest · qwen: --continue
+    codex: `exec resume --last` · claude: --continue
 * auto-approve so the run never hangs on a confirmation prompt:
-  agy: --dangerously-skip-permissions · gemini/qwen: --yolo
-  (disable with --no-yolo if you prefer to run without tools)
-* agy answers are captured from its --output-format json envelope
-  {status, response, error, usage}; gemini/qwen from plain stdout
+    agy/claude: --dangerously-skip-permissions
+    gemini/qwen/codex: --yolo
+* answers are captured per client:
+    codex:   --output-last-message <tmpfile>  (final assistant message)
+    agy:     --output-format json  ->  envelope {status, response, …}
+    claude:  --output-format json  ->  {"result": …, "is_error": …}
+    gemini/qwen: plain stdout
+* MCP servers are written into the client's config by the engine BEFORE the
+  run (mcp_config.ensure_cli_mcp_servers) and SCOPED PER PROMPT so a prompt
+  with MCP off really has no MCP tools:
+    gemini/qwen: --allowed-mcp-server-names allow-list flag
+    agy:         run's servers toggled in ~/.gemini/config/mcp_config.json
+    codex:       -c mcp_servers.<name>.enabled=false launch overrides
+    claude:      per-launch --mcp-config <file> --strict-mcp-config file
+* IMAGES in terminal mode = a file LOCATION on disk (the CLI runs locally
+  and has file tools):
+    codex:  attached natively via --image <path>
+    others: the absolute path + a one-line instruction is appended to the
+            prompt and the model reads the file itself (agy explicitly
+            supports file paths in the prompt — it has no binary paste;
+            claude/gemini/qwen all have file-reading tools)
 
-Google RETIRED the open-source Gemini CLI for individual accounts on
-2026-06-18; its replacement is the Antigravity CLI (the `agy` binary, a Go
-app that reuses the ~/.gemini home). Terminal mode auto-detects: agy when
-installed, legacy gemini otherwise (still alive for paid-API-key /
-enterprise installs).
+Google retired the open-source Gemini CLI for individual accounts on
+2026-06-18; agy is the replacement (Go binary, reuses the ~/.gemini home).
+Terminal mode auto-detects: agy when installed, legacy gemini otherwise.
 
 Login is one-time and happens in the user's own terminal:
-  agy      -> sign in with a Google account (free with your plan, no API key)
-  gemini   -> same (legacy)
-  qwen     -> sign in with a Qwen account (free tier, no API key)
+  codex    -> `codex` once, log in with your ChatGPT account (no API key)
+  agy      -> `agy` once, sign in with your Google account
+  claude   -> `claude` once, sign in with your Claude account
+  qwen     -> `qwen` once, sign in with your Qwen account
 """
 from __future__ import annotations
 
@@ -40,29 +57,33 @@ import os
 import shlex
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 
 from .errors import Stopped, ToolError
 
-#: Sites available in terminal mode (official CLI clients that speak MCP).
-CLI_SITES = ("gemini", "qwen")
+#: Sites available in terminal mode (each maps to a vendor's official CLI).
+CLI_SITES = ("chatgpt", "gemini", "claude", "qwen")
 
 #: NO-MCP trick: an allow-list containing a name no server will ever have.
 _EMPTY_ALLOWLIST = "__subscription_sweater_no_mcp__"
 
 
 def select_client(site: str) -> str:
-    """Pick the CLI client for *site*.
-
-    Google retired the open-source Gemini CLI for individual accounts on
-    2026-06-18; the replacement is the Antigravity CLI (`agy`). Prefer agy
-    when it is installed; fall back to the legacy `gemini` binary (still
-    functional for paid-API-key / Gemini Code Assist enterprise installs).
-    """
-    if site == "gemini" and shutil.which("agy"):
-        return "agy"
-    return site
+    """Map a benchmark site to the CLI client that serves it."""
+    if site == "chatgpt":
+        return "codex"                        # ChatGPT subscription -> Codex CLI
+    if site == "gemini":
+        # agy is Google's current CLI (gemini-cli EOL 2026-06-18 for
+        # individual accounts); fall back to the legacy binary.
+        return "agy" if shutil.which("agy") else "gemini"
+    if site in ("claude", "qwen"):
+        return site
+    raise ToolError(
+        f"Terminal mode has no CLI client for site '{site}' — use: "
+        f"chatgpt (Codex), gemini (Antigravity/agy), claude (Claude Code), "
+        f"qwen (Qwen Code).")
 
 
 # --------------------------------------------------------------------------- #
@@ -80,9 +101,13 @@ _AGY_SPEC = {
     "mcp_tool": "agy mcp add <name> <command>",
     "model_hint": ("agy: `agy models` lists what your account can use "
                    "(Gemini / Claude / gpt-oss) — empty = CLI default"),
+    "prompt_style": "flag",
+    "prompt_flag": ["-p"],
+    "subcommand": [],
     # Official headless docs: "-c / --continue resumes the MOST RECENT
     # conversation" (the JSON envelope's conversation_id works too, via
     # --conversation <id>).
+    "continue_style": "flag",
     "continue_args": ["--continue"],
     # Official headless docs: agy has NO --yolo;
     # --dangerously-skip-permissions sets the permission mode to
@@ -90,10 +115,15 @@ _AGY_SPEC = {
     "yolo_args": ["--dangerously-skip-permissions"],
     # --output-format json -> one JSON envelope {status, response, error, …}
     # on completion (diagnostics go to stderr, so stdout stays clean).
-    "output_json": True,
-    # agy has no per-invocation MCP allow-list flag -> scope per prompt by
-    # rewriting the run's servers in mcp_config.json before each launch.
-    "mcp_allowlist_flag": False,
+    "output": "json-envelope",
+    # No per-invocation MCP allow-list flag -> scope per prompt by toggling
+    # the run's servers in mcp_config.json before each launch.
+    "mcp_scope": "config-file",
+    "mcp_scope_note": ("per-prompt MCP scope: run's servers are toggled in "
+                       "mcp_config.json before each launch (agy has no allow-list flag)"),
+    # agy has no binary image paste; the model reads file paths with its
+    # file tools, so the image reaches it as a path + instruction.
+    "image": "prompt",
 }
 
 _GEMINI_SPEC = {
@@ -107,10 +137,16 @@ _GEMINI_SPEC = {
     "model_hint": "e.g. gemini-3.1-pro-preview, gemini-3-flash-preview — empty = client Auto",
     # confirmed via `gemini --help`: -r/--resume explicitly documents
     # "latest" as a real special value ("Use 'latest' for most recent").
+    "prompt_style": "flag",
+    "prompt_flag": ["-p"],
+    "subcommand": [],
+    "continue_style": "flag",
     "continue_args": ["--resume", "latest"],
     "yolo_args": ["--yolo"],
-    "output_json": False,
-    "mcp_allowlist_flag": True,
+    "output": "raw",
+    "mcp_scope": "flag",
+    "mcp_scope_note": "per-prompt MCP scope: --allowed-mcp-server-names allow-list",
+    "image": "prompt",
 }
 
 _QWEN_SPEC = {
@@ -123,27 +159,98 @@ _QWEN_SPEC = {
     "mcp_tool": "qwen mcp add <name> <command>",
     "model_hint": "e.g. qwen3-coder-next, qwen3-max — empty = client default",
     # confirmed via `qwen --help`: unlike gemini, --resume/-r here takes
-    # a REAL session ID ("Resume a specific session by its ID") with no
-    # "latest" special-case -- passing the literal string "latest" would
-    # be treated as an id that doesn't exist. The real "most recent
-    # session" flag is the separate -c/--continue boolean.
+    # a REAL session ID with no "latest" special case — the real "most
+    # recent session" flag is the separate -c/--continue boolean.
+    "prompt_style": "flag",
+    "prompt_flag": ["-p"],
+    "subcommand": [],
+    "continue_style": "flag",
     "continue_args": ["--continue"],
     "yolo_args": ["--yolo"],
-    "output_json": False,
-    "mcp_allowlist_flag": True,
+    "output": "raw",
+    "mcp_scope": "flag",
+    "mcp_scope_note": "per-prompt MCP scope: --allowed-mcp-server-names allow-list",
+    "image": "prompt",
+}
+
+_CODEX_SPEC = {
+    "bin": "codex",
+    "name": "Codex CLI (OpenAI)",
+    "install": "npm install -g @openai/codex   (or: brew install codex)",
+    "auth": ("run `codex` once in your terminal and log in with your ChatGPT "
+             "account (Plus/Pro) — the CLI reuses the subscription, no API key"),
+    "settings": "~/.codex/config.toml",
+    "mcp_tool": "codex mcp add <name> --command <command>",
+    "model_hint": "e.g. gpt-5.6 — empty = account default",
+    # `codex exec` takes the prompt as a POSITIONAL argument (or "-" from
+    # stdin); -p is a profile flag, NOT a prompt flag — do not confuse.
+    "prompt_style": "positional",
+    "prompt_flag": [],
+    "subcommand": ["exec"],
+    # `codex exec resume --last` = continue the most recent exec session.
+    "continue_style": "subcommand",
+    "continue_args": ["resume", "--last"],
+    # --yolo is the documented short alias of
+    # --dangerously-bypass-approvals-and-sandbox.
+    "yolo_args": ["--yolo"],
+    # Outside a git repo (most batch folders) codex refuses without this.
+    "extra_args": ["--skip-git-repo-check"],
+    # -o/--output-last-message writes the final assistant message to a file
+    # — the cleanest way to capture the answer (stdout is formatted TUI text
+    # or --json JSONL events, both noisier).
+    "output": "last-message-file",
+    # MCP servers live in [mcp_servers.*] of config.toml; per-prompt scope =
+    # -c mcp_servers.<name>.enabled=false launch overrides (the file itself
+    # is never rewritten per prompt).
+    "mcp_scope": "config-override",
+    "mcp_scope_note": ("per-prompt MCP scope: -c mcp_servers.<name>.enabled=false "
+                       "launch overrides (config.toml itself untouched per prompt)"),
+    # Native image attachment.
+    "image": "flag",
+}
+
+_CLAUDE_SPEC = {
+    "bin": "claude",
+    "name": "Claude Code",
+    "install": "npm install -g @anthropic-ai/claude-code   (or: brew install claude-code)",
+    "auth": ("run `claude` once in your terminal and sign in with your Claude "
+             "account (Pro/Max) — no API key"),
+    "settings": "~/.claude.json",
+    "mcp_tool": "claude mcp add <name> -s user -- <command>",
+    "model_hint": "e.g. opus, sonnet, claude-opus-4-8 — empty = account default",
+    "prompt_style": "flag",
+    "prompt_flag": ["-p"],
+    "subcommand": [],
+    # --continue = resume the most recent session; --resume takes an id.
+    "continue_style": "flag",
+    "continue_args": ["--continue"],
+    "yolo_args": ["--dangerously-skip-permissions"],
+    # --output-format json -> one JSON object {result, is_error, …}.
+    "output": "json-result",
+    # Per-launch --mcp-config <file> --strict-mcp-config: the file contains
+    # exactly the servers this prompt may use (user's own + allowed run
+    # servers), everything else is ignored — a hard per-prompt scope.
+    "mcp_scope": "per-launch-file",
+    "mcp_scope_note": ("per-prompt MCP scope: per-launch --mcp-config file with "
+                       "--strict-mcp-config (only the allowed servers exist)"),
+    # Claude Code reads image file paths with its Read tool (multimodal);
+    # on Windows the path-in-prompt is the documented reliable route.
+    "image": "prompt",
+}
+
+_SPECS = {
+    "agy": _AGY_SPEC,
+    "gemini": _GEMINI_SPEC,
+    "qwen": _QWEN_SPEC,
+    "codex": _CODEX_SPEC,
+    "claude": _CLAUDE_SPEC,
 }
 
 
-def _cli_spec(site: str, client: str | None = None) -> dict:
-    if site == "gemini":
-        client = client or select_client("gemini")
-        return _AGY_SPEC if client == "agy" else _GEMINI_SPEC
-    if site == "qwen":
-        return _QWEN_SPEC
-    raise ToolError(
-        f"Terminal mode supports: gemini, qwen (their official CLI clients are "
-        f"what speak MCP). ChatGPT/Claude use browser or desktop mode; any other "
-        f"app: manual paste mode.")
+def _cli_spec(client: str) -> dict:
+    if client not in _SPECS:
+        raise ToolError(f"Unknown terminal client '{client}' (known: {', '.join(_SPECS)}).")
+    return _SPECS[client]
 
 
 class TerminalCLIBot:
@@ -153,7 +260,7 @@ class TerminalCLIBot:
                  log=print, should_stop=None):
         self.site = site
         self.client = client or select_client(site)
-        self.spec = _cli_spec(site, self.client)
+        self.spec = _cli_spec(self.client)
         self.yolo = yolo
         self.new_chat = new_chat
         self.has_mcp_servers = has_mcp_servers
@@ -161,6 +268,12 @@ class TerminalCLIBot:
         self.max_wait = max_wait_seconds
         self.log = log
         self._should_stop = should_stop or (lambda: False)
+        # Scratch files (one per process, overwritten per prompt).
+        self._codex_msg = os.path.join(tempfile.gettempdir(),
+                                       f"sub-sweater-codex-{os.getpid()}.txt")
+        self._claude_mcp_file = os.path.join(
+            tempfile.gettempdir(), "subscription-sweater",
+            f"claude-mcp-{os.getpid()}.json")
 
     # ------------------------------------------------------------------ #
     def start(self) -> None:
@@ -171,14 +284,18 @@ class TerminalCLIBot:
                  f"({self.spec['bin']}) — one headless call per prompt, "
                  f"answers captured from stdout.")
         if not self.new_chat:
-            self.log("  (sessions: continuing the latest CLI session per run "
-                     f"({' '.join(self.spec['continue_args'])}))")
+            cont = (" ".join(self.spec["continue_args"])
+                    if self.spec["continue_style"] == "flag"
+                    else f"{' '.join(self.spec['subcommand'] + self.spec['continue_args'])}")
+            self.log(f"  (sessions: continuing the latest CLI session per run ({cont}))")
         if self.yolo:
             self.log(f"  (auto-approve: ON — tool calls run without confirmation "
                      f"({' '.join(self.spec['yolo_args'])}); CLI flag --no-yolo disables this)")
         else:
             self.log("  (auto-approve: OFF — prompts that need tool confirmation "
                      "may fail in headless mode)")
+        if self.mcp_servers:
+            self.log(f"  (MCP servers: {', '.join(self.mcp_servers)}) — {self.spec['mcp_scope_note']}")
 
     def _missing_client_error(self) -> str:
         if self.site == "gemini":
@@ -195,50 +312,105 @@ class TerminalCLIBot:
                 "individual accounts 2026-06-18; works only with a paid API key "
                 "or Gemini Code Assist Standard/Enterprise)\n"
                 "(Then start this run again.)")
+        s = self.spec
         return (
-            f"Terminal mode needs the {self.spec['name']} client, but "
-            f"`{self.spec['bin']}` was not found on PATH.\n"
-            f"  install:  {self.spec['install']}\n"
-            f"  login:    {self.spec['auth']}\n"
-            "(Node.js 18+ required. Then start this run again.)")
+            f"Terminal mode needs the {s['name']} client, but `{s['bin']}` "
+            f"was not found on PATH.\n"
+            f"  install:  {s['install']}\n"
+            f"  login:    {s['auth']}\n"
+            "(Then start this run again.)")
 
     # ------------------------------------------------------------------ #
-    def build_command(self, prompt: str, decision=None) -> list:
+    def build_command(self, prompt: str, decision=None, image_path: str = "") -> list:
         """The exact argv for one prompt (pure — unit-testable)."""
         s = self.spec
-        cmd = [s["bin"], "-p", prompt]
+        text = prompt
+        if image_path and s["image"] == "prompt":
+            text += ("\n\n[Image for this prompt: " + image_path
+                     + " — it is part of the question; read that file with your "
+                       "file tools and analyze it.]")
+        cmd = [s["bin"]] + list(s.get("subcommand") or [])
+        if not self.new_chat and s.get("continue_style") == "subcommand":
+            cmd += list(s["continue_args"])
+        flags: list = []
         if decision is not None:
             if decision.target_model:
-                cmd += ["--model", decision.target_model]
-            if s["output_json"]:
-                cmd += ["--output-format", "json"]
-            if s["mcp_allowlist_flag"]:
+                flags += ["--model", decision.target_model]
+            if s["output"] in ("json-envelope", "json-result"):
+                flags += ["--output-format", "json"]
+            if s["output"] == "last-message-file":
+                flags += ["--output-last-message", self._codex_msg]
+            if s["mcp_scope"] == "flag":
                 if decision.mcp and decision.mcp_names:
                     for n in decision.mcp_names:          # repeated array flag
-                        cmd += ["--allowed-mcp-server-names", n]
+                        flags += ["--allowed-mcp-server-names", n]
                 elif self.has_mcp_servers and not decision.mcp:
-                    cmd += ["--allowed-mcp-server-names", _EMPTY_ALLOWLIST]
+                    flags += ["--allowed-mcp-server-names", _EMPTY_ALLOWLIST]
+            elif s["mcp_scope"] == "config-override" and self.mcp_servers:
+                # Codex: disable the run's servers this prompt is NOT allowed.
+                enabled = set(decision.mcp_names or ()) if decision.mcp else set()
+                for n in self.mcp_servers:
+                    if n not in enabled:
+                        flags += ["-c", f"mcp_servers.{n}.enabled=false"]
+            elif s["mcp_scope"] == "per-launch-file" and self.mcp_servers:
+                f = self._claude_mcp_file_for(decision)
+                if f:
+                    flags += ["--mcp-config", f, "--strict-mcp-config"]
+            if s["image"] == "flag" and image_path:
+                flags += ["--image", image_path]
         if self.yolo:
-            cmd += s["yolo_args"]
-        if not self.new_chat:
-            cmd += s["continue_args"]
-        return cmd
+            flags += list(s["yolo_args"])
+        flags += list(s.get("extra_args") or [])
+        if not self.new_chat and s.get("continue_style") == "flag":
+            flags += list(s["continue_args"])
+        if s["prompt_style"] == "flag":
+            return cmd + list(s["prompt_flag"]) + [text] + flags
+        return cmd + flags + [text]
+
+    def _claude_mcp_file_for(self, decision) -> str:
+        """Write the per-launch MCP config for Claude Code and return its
+        path: the user's own servers (from ~/.claude.json, minus this
+        run's) plus exactly the run's servers this prompt may use."""
+        from . import mcp_config
+        if decision is None:
+            enabled = set(self.mcp_servers)
+        else:
+            enabled = set(decision.mcp_names or ()) if decision.mcp else set()
+        user = {k: v for k, v in mcp_config.cli_user_mcp_servers("claude").items()
+                if k not in self.mcp_servers}
+        servers = {**user, **{k: v for k, v in self.mcp_servers.items()
+                              if k in enabled}}
+        try:
+            os.makedirs(os.path.dirname(self._claude_mcp_file) or ".", exist_ok=True)
+            with open(self._claude_mcp_file, "w", encoding="utf-8") as f:
+                json.dump({"mcpServers": servers}, f, indent=2)
+        except Exception as e:
+            self.log(f"  (!) could not write the per-prompt MCP scope file: {e}")
+            return ""
+        return self._claude_mcp_file
 
     # ------------------------------------------------------------------ #
     def answer(self, prompt: str, decision=None) -> str:
+        image_path = (getattr(decision, "image", "") or "") if decision else ""
         # agy has no per-invocation MCP allow-list flag: scope by toggling
         # the run's servers in the user-level mcp_config.json right before
         # launch (each `agy -p` is a fresh process that reads the file at
-        # startup). gemini/qwen do this via --allowed-mcp-server-names.
-        if self.spec["bin"] == "agy" and self.mcp_servers:
+        # startup). The other clients scope via flags (see build_command).
+        if self.client == "agy" and self.mcp_servers:
             from . import mcp_config
-
             enabled = set()
             if decision is not None and decision.mcp and decision.mcp_names:
                 enabled = set(decision.mcp_names)
             mcp_config.set_cli_mcp_scope("agy", self.mcp_servers, enabled, log=self.log)
-        cmd = self.build_command(prompt, decision)
-        shown = [cmd[0], "-p", "…"] + cmd[3:]          # skip the prompt itself
+        if self.spec["output"] == "last-message-file":
+            try:
+                if os.path.exists(self._codex_msg):
+                    os.remove(self._codex_msg)
+            except OSError:
+                pass
+        cmd = self.build_command(prompt, decision, image_path=image_path)
+        text_sent = prompt + _image_suffix(prompt, image_path, self.spec)
+        shown = ["…" if c == text_sent else c for c in cmd]
         self.log("  (terminal: " + " ".join(shlex.quote(c) for c in shown) + ")")
         t0 = time.time()
         proc = subprocess.Popen(
@@ -277,17 +449,37 @@ class TerminalCLIBot:
         if proc.returncode != 0:
             raise ToolError(f"{self.spec['name']} exited with code {proc.returncode}: "
                             f"{_tail(err or out)}{_auth_hint(err, self.spec)}")
+        if self.spec["output"] == "last-message-file":
+            ans = ""
+            try:
+                if os.path.exists(self._codex_msg):
+                    ans = open(self._codex_msg, "r", encoding="utf-8").read().strip()
+            except OSError:
+                pass
+            if ans:
+                return ans
+            if out:
+                return out                     # formatted fallback
+            raise ToolError(f"{self.spec['name']} returned no output "
+                            f"{_tail(err)}{_auth_hint(err, self.spec)}")
         if not out:
             raise ToolError(f"{self.spec['name']} returned no output "
                             f"{_tail(err)}{_auth_hint(err, self.spec)}")
-        if self.spec["output_json"]:
-            env = _parse_json_envelope(out)
+        if self.spec["output"] in ("json-envelope", "json-result"):
+            env = _parse_json_object(out)
             if env is not None:
-                if env.get("status") == "SUCCESS":
-                    return (env.get("response") or "").strip()
-                raise ToolError(
-                    f"{self.spec['name']} ended with status {env.get('status')}: "
-                    f"{env.get('error') or _tail(out)}")
+                if self.spec["output"] == "json-envelope":
+                    if env.get("status") == "SUCCESS":
+                        return (env.get("response") or "").strip()
+                    raise ToolError(
+                        f"{self.spec['name']} ended with status {env.get('status')}: "
+                        f"{env.get('error') or _tail(out)}")
+                else:  # claude json-result
+                    if env.get("is_error"):
+                        raise ToolError(f"{self.spec['name']} failed: "
+                                        f"{env.get('result') or env.get('error') or _tail(out)}")
+                    if "result" in env:
+                        return str(env.get("result") or "").strip()
         return out
 
     # ------------------------------------------------------------------ #
@@ -295,11 +487,20 @@ class TerminalCLIBot:
         pass
 
 
-def _parse_json_envelope(out: str):
-    """agy --output-format json prints ONE JSON envelope on completion
-    ({status, response, error, …}). Returns the dict, or None when stdout
-    is not that envelope (plain text / older build) so the caller can fall
-    back to raw output."""
+def _image_suffix(prompt: str, image_path: str, spec: dict) -> str:
+    """The exact text build_command appends for prompt-style image clients
+    (kept in one place so the log-masking logic stays in sync)."""
+    if image_path and spec["image"] == "prompt":
+        return ("\n\n[Image for this prompt: " + image_path
+                + " — it is part of the question; read that file with your "
+                  "file tools and analyze it.]")
+    return ""
+
+
+def _parse_json_object(out: str):
+    """Parse a single-JSON-object stdout (agy envelope / claude result).
+    Returns the dict, or None when stdout is not that object (plain text)
+    so the caller can fall back to raw output."""
     t = (out or "").strip()
     if not t.startswith("{"):
         return None
@@ -307,7 +508,7 @@ def _parse_json_envelope(out: str):
         data = json.loads(t)
     except Exception:
         return None
-    return data if isinstance(data, dict) and "status" in data else None
+    return data if isinstance(data, dict) else None
 
 
 def _tail(s: str, n: int = 500) -> str:

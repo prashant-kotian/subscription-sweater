@@ -310,7 +310,8 @@ def test_terminal(tmp: str, txt: str) -> None:
     assert bot_nc_q.build_command("h", PromptDecision(clean_prompt="h"))[-1:] == ["--continue"]
 
     for s in CLI_SITES:
-        assert TerminalCLIBot(site=s, log=quiet).spec["bin"] in ("gemini", "qwen", "agy")
+        assert TerminalCLIBot(site=s, log=quiet).spec["bin"] in (
+            "codex", "claude", "qwen", "gemini", "agy")
     print("  terminal  : command builder (model / mcp scoping / resume)  OK")
 
     # -- Antigravity CLI (agy): gemini-cli's successor (retired 2026-06-18) -- #
@@ -348,6 +349,104 @@ def test_terminal(tmp: str, txt: str) -> None:
     finally:
         os.environ["HOME"] = old_home2
     print("  terminal  : agy (Antigravity) command + per-prompt MCP scope  OK")
+
+    # -- Codex CLI (OpenAI): site chatgpt -> `codex exec` --------------------- #
+    bot_cx = TerminalCLIBot(site="chatgpt", log=quiet)
+    assert bot_cx.client == "codex" and bot_cx.spec["bin"] == "codex"
+    d = PromptDecision(clean_prompt="hello", target_model="gpt-5.6",
+                       mcp=True, mcp_names=["github"])
+    cmd = bot_cx.build_command("hello", d)
+    assert cmd[:4] == ["codex", "exec", "--model", "gpt-5.6"], cmd
+    assert "--yolo" in cmd and "--skip-git-repo-check" in cmd, cmd
+    assert cmd[-1] == "hello", cmd                      # positional prompt, last
+    i = cmd.index("--output-last-message")
+    assert os.path.basename(cmd[i + 1]).startswith("sub-sweater-codex-"), cmd
+    # mcp=on with an allowed subset -> the OTHER run servers get -c disabled
+    bot_cx2 = TerminalCLIBot(site="chatgpt", mcp_servers=SERVERS, log=quiet)
+    cmd = bot_cx2.build_command("h", d)
+    assert ["-c", "mcp_servers.files.enabled=false"] in \
+        [cmd[i:i + 2] for i in range(len(cmd) - 1)], cmd
+    assert "mcp_servers.github.enabled=false" not in " ".join(cmd), cmd
+    # mcp=off -> every run server disabled for this launch
+    cmd = bot_cx2.build_command("h", PromptDecision(clean_prompt="h", mcp=False))
+    assert "mcp_servers.github.enabled=false" in " ".join(cmd) and \
+           "mcp_servers.files.enabled=false" in " ".join(cmd), cmd
+    # continue = `exec resume --last`
+    bot_cx3 = TerminalCLIBot(site="chatgpt", new_chat=False, log=quiet)
+    cmd = bot_cx3.build_command("h", PromptDecision(clean_prompt="h"))
+    assert cmd[:4] == ["codex", "exec", "resume", "--last"], cmd
+    # native image attach
+    cmd = bot_cx2.build_command("h", d, image_path=r"C:\imgs\c.png")
+    assert ["--image", r"C:\imgs\c.png"] in \
+        [cmd[i:i + 2] for i in range(len(cmd) - 1)], cmd
+    print("  terminal  : codex (OpenAI) command + mcp overrides + image  OK")
+
+    # -- Codex config.toml merge: append-only, comments + backup preserved --- #
+    home_cx = os.path.join(tmp, "fakehome_codex")
+    os.makedirs(os.path.join(home_cx, ".codex"), exist_ok=True)
+    cp = os.path.join(home_cx, ".codex", "config.toml")
+    with open(cp, "w", encoding="utf-8") as f:
+        f.write('# user comment that must survive\nmodel = "gpt-5.6"\n\n'
+                '[mcp_servers.mine]\ncommand = "echo"\n')
+    old_home_cx = os.environ.get("HOME")
+    os.environ["HOME"] = home_cx
+    try:
+        assert mcp_config.cli_settings_path("codex") == os.path.normpath(cp)
+        mcp_config.ensure_cli_mcp_servers("codex", SERVERS, log=quiet)
+        text = open(cp, encoding="utf-8").read()
+        assert text.startswith("# user comment that must survive"), text
+        assert 'model = "gpt-5.6"' in text
+        assert "[mcp_servers.github]" in text and "[mcp_servers.files]" in text
+        try:
+            import tomllib
+            data = tomllib.loads(text)
+            assert set(data["mcp_servers"]) == {"mine", "github", "files"}
+            assert data["mcp_servers"]["github"]["args"][1].endswith("server-github")
+        except ImportError:
+            pass
+        backups = [x for x in os.listdir(os.path.join(home_cx, ".codex"))
+                   if x.startswith("config.toml.bak-")]
+        assert backups, "original config.toml must be backed up before merge"
+        mcp_config.ensure_cli_mcp_servers("codex", SERVERS, log=quiet)  # idempotent
+        text2 = open(cp, encoding="utf-8").read()
+        assert text2.count("[mcp_servers.github]") == 1, "no duplicate sections"
+    finally:
+        os.environ["HOME"] = old_home_cx
+    print("  terminal  : codex config.toml merge (append-only + backup)  OK")
+
+    # -- Claude Code: site claude -> `claude -p`, strict per-launch mcp file -- #
+    home_cc = os.path.join(tmp, "fakehome_claude")
+    os.makedirs(home_cc, exist_ok=True)
+    # the user's own server in ~/.claude.json must survive into the strict file
+    with open(os.path.join(home_cc, ".claude.json"), "w", encoding="utf-8") as f:
+        json_mod.dump({"other": 1, "mcpServers": {"mine": {"command": "echo"}}}, f)
+    old_home_cc = os.environ.get("HOME")
+    os.environ["HOME"] = home_cc
+    try:
+        bot_cc = TerminalCLIBot(site="claude", mcp_servers=SERVERS,
+                                new_chat=False, log=quiet)
+        assert bot_cc.client == "claude"
+        d = PromptDecision(clean_prompt="hello", target_model="opus",
+                           mcp=True, mcp_names=["files"])
+        cmd = bot_cc.build_command("hello", d, image_path=r"C:\imgs\c.png")
+        assert cmd[:2] == ["claude", "-p"], cmd
+        # claude has no image flag: the path goes into the prompt text
+        assert "C:\\imgs\\c.png" in cmd[2] and "file tools" in cmd[2], cmd[2]
+        assert "--output-format" in cmd and "json" in cmd, cmd
+        assert "--dangerously-skip-permissions" in cmd, cmd
+        assert cmd[-1:] == ["--continue"], cmd
+        i = cmd.index("--mcp-config")
+        mcp_file = cmd[i + 1]
+        assert cmd[i + 2] == "--strict-mcp-config", cmd
+        data = json_mod.load(open(mcp_file, encoding="utf-8"))
+        assert set(data["mcpServers"]) == {"mine", "files"}, data
+        # mcp=off -> only the user's own servers remain in the strict file
+        cmd = bot_cc.build_command("h", PromptDecision(clean_prompt="h", mcp=False))
+        data = json_mod.load(open(mcp_file, encoding="utf-8"))
+        assert set(data["mcpServers"]) == {"mine"}, data
+    finally:
+        os.environ["HOME"] = old_home_cc
+    print("  terminal  : claude (Claude Code) command + strict mcp file  OK")
 
     # -- MCP settings merge (fake HOME, never the real one) ------------------ #
     home = os.path.join(tmp, "fakehome")
@@ -423,6 +522,53 @@ def test_terminal(tmp: str, txt: str) -> None:
         assert "--yolo" in calls and "--allowed-mcp-server-names" in calls, calls
         g = json_mod.load(open(gpath, encoding="utf-8"))
         assert "github" in g["mcpServers"]
+
+        # -- e2e with stub 'codex' (site chatgpt) and 'claude' ---------------- #
+        cxstub = os.path.join(bin_dir, "codex")
+        with open(cxstub, "w", encoding="utf-8") as f:
+            f.write('#!/bin/sh\nprintf "%s\\n" "$@" >> "$STUB_LOG"\n'
+                    'o=""; prev=""\nfor a in "$@"; do\n'
+                    '  if [ "$prev" = "--output-last-message" ]; then o="$a"; fi\n'
+                    '  prev="$a"\ndone\n'
+                    '[ -n "$o" ] && printf "CODEX-OK" > "$o"\n'
+                    'printf "CODEX STDOUT\\n"\n')
+        os.chmod(cxstub, 0o755)
+        cstub = os.path.join(bin_dir, "claude")
+        with open(cstub, "w", encoding="utf-8") as f:
+            f.write('#!/bin/sh\nprintf "%s\\n" "$@" >> "$STUB_LOG"\n'
+                    'printf \'{"type":"result","is_error":false,'
+                    '"result":"CLAUDE-OK","session_id":"s1"}\\n\'\n')
+        os.chmod(cstub, 0o755)
+
+        out_cx = os.path.join(tmp, "answers_codex.txt")
+        Engine(RunConfig(mode="terminal", site="chatgpt", input_path=txt,
+                         output_path=out_cx, web_search="never", mcp="always",
+                         mcp_servers=SERVERS, delay_between=0.0),
+               log=lambda m: None, progress=lambda d, t: None).run()
+        w = writers.make_writer(out_cx, log=lambda m: None)
+        assert w.count() == len(SAMPLE_PROMPTS)
+        w.close()
+        txt_cx = open(out_cx, encoding="utf-8").read()
+        assert txt_cx.count("CODEX-OK") >= len(SAMPLE_PROMPTS), txt_cx
+        cx_log = open(stub_log, encoding="utf-8").read()
+        assert "codex" in cx_log and "--output-last-message" in cx_log, cx_log
+        cx_cfg = os.path.join(home, ".codex", "config.toml")
+        assert os.path.exists(cx_cfg) and \
+            "[mcp_servers.github]" in open(cx_cfg, encoding="utf-8").read()
+
+        out_cl = os.path.join(tmp, "answers_claude.txt")
+        Engine(RunConfig(mode="terminal", site="claude", input_path=txt,
+                         output_path=out_cl, web_search="never", mcp="always",
+                         mcp_servers=SERVERS, delay_between=0.0),
+               log=lambda m: None, progress=lambda d, t: None).run()
+        txt_cl = open(out_cl, encoding="utf-8").read()
+        assert txt_cl.count("CLAUDE-OK") >= len(SAMPLE_PROMPTS), txt_cl
+        cl_cfg = os.path.join(home, ".claude.json")
+        g2 = json_mod.load(open(cl_cfg, encoding="utf-8"))
+        assert "github" in g2["mcpServers"]
+        cl_log = open(stub_log, encoding="utf-8").read()
+        assert "--mcp-config" in cl_log and "--strict-mcp-config" in cl_log
+        print("  terminal  : e2e stub codex + claude (answers + configs)  OK")
     finally:
         os.environ["PATH"] = old_path
         os.environ["HOME"] = old_home[0]

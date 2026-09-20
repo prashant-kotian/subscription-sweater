@@ -198,6 +198,8 @@ class App:
         }
         if self._mode_key() == "terminal":
             hints = {
+                "chatgpt": "Codex CLI: e.g. gpt-5.6 — empty = account default",
+                "claude": "Claude Code: e.g. opus, claude-opus-4-8 — empty = account default",
                 "gemini": ("agy: `agy models` lists your account's models (Gemini / Claude / "
                            "gpt-oss) — empty = CLI default (legacy gemini-cli: gemini-3.1-pro-preview …)"),
                 "qwen": "e.g. qwen3-coder-next, qwen3-max — empty = client default",
@@ -227,20 +229,22 @@ class App:
                   foreground="#666", wraplength=900, justify="left").grid(
             row=1, column=0, columnspan=5, sticky="w", padx=6, pady=(0, 2))
 
-        # terminal sub-options (official Gemini CLI / Qwen Code clients)
+        # terminal sub-options (official subscription CLI clients)
         self.frame_terminal = ttk.Frame(mid)
         ttk.Label(self.frame_terminal,
                   text="Terminal mode drives the official CLI client for the chosen site — "
-                  "one headless call per prompt, fresh session, answer from stdout. "
-                  "This is the native MCP path for Gemini & Qwen (their web products "
-                  "have no MCP attachment).").grid(
+                  "one headless call per prompt, answer captured per client. "
+                  "This is the native MCP path for all of them (the consumer web "
+                  "products have no local MCP attachment).").grid(
             row=0, column=0, columnspan=3, sticky="w", padx=6, pady=2)
         ttk.Label(self.frame_terminal,
-                  text="Gemini:  npm install -g @google/gemini-cli   then run `gemini` once and sign in (Google, free)\n"
-                  "Qwen:    npm install -g @qwen-code/qwen-code   then run `qwen` once and sign in (Qwen, free)\n"
-                  "MCP servers from the box below are written to the client's settings file "
-                  "(~/.gemini or ~/.qwen) and scoped per prompt; tool calls auto-approve (CLI: --no-yolo to disable).",
-                  foreground="#666", wraplength=900, justify="left").grid(
+                  text="ChatGPT:  Codex CLI    — npm install -g @openai/codex          then `codex` once, log in with ChatGPT\n"
+                  "Gemini:   Antigravity — PowerShell: irm https://antigravity.google/cli/install.ps1 | iex, then `agy` once (Google)\n"
+                  "Claude:   Claude Code  — npm install -g @anthropic-ai/claude-code   then `claude` once (Claude Pro/Max)\n"
+                  "Qwen:     Qwen Code    — npm install -g @qwen-code/qwen-code        then `qwen` once (Qwen)\n"
+                  "MCP servers from the box below are written to the client's settings file and scoped per prompt.\n"
+                  "Images: paste the file location in the prompt as  @@image: H:\\path\\to\\img.png  (the CLI reads it from disk).",
+                  foreground="#666", wraplength=940, justify="left").grid(
             row=1, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 2))
 
         # manual sub-options

@@ -126,7 +126,11 @@ class Engine:
             if d and d not in dirs:
                 dirs.append(d)
         if raw:
-            for c in [os.path.join(d, raw) for d in dirs] + [raw]:
+            # A pasted absolute path (e.g. "H:\…\GZ-15_chart.png" in terminal
+            # mode) wins over the folder search — try it first, as-is.
+            cands = [os.path.abspath(os.path.expanduser(raw))]
+            cands += [os.path.join(d, raw) for d in dirs] + [raw]
+            for c in cands:
                 if os.path.isfile(c):
                     return os.path.abspath(c)
             if announce:
@@ -211,9 +215,10 @@ class Engine:
 
             if cfg.site not in CLI_SITES:
                 raise ToolError(
-                    "Terminal mode supports: gemini, qwen (their official CLI "
-                    "clients are what natively speak MCP). For ChatGPT/Claude "
-                    "use browser or desktop mode; any other app: manual mode.")
+                    "Terminal mode supports: chatgpt (Codex CLI), gemini "
+                    "(Antigravity CLI), claude (Claude Code), qwen (Qwen Code) "
+                    "— the official subscription CLIs that natively speak MCP. "
+                    "Any other app: browser, desktop or manual mode.")
             policy = self._policy()
             servers = policy.selected_servers()
             # Gemini: prefer the current Antigravity CLI (agy), fall back to
