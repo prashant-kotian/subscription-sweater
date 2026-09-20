@@ -112,6 +112,18 @@ class ManualBot:
     def _copy(self) -> str:
         import pyperclip
 
+        # Real, confirmed bug (2026-09-20): in the button-driven (web/GUI)
+        # flow, the user clicks "Answer selected" in the TOOL's own window
+        # right before this runs -- that click itself moves OS focus to the
+        # tool, not the LLM app. Ctrl+C is copy-from-focused-window, so
+        # without re-focusing first this fires against the tool's own page
+        # and silently leaves the clipboard holding the stale pasted prompt
+        # (the exact symptom reported: "clipboard still contains the
+        # PROMPT"). _paste() already re-focuses before its keystroke; _copy()
+        # needs the same before its own. A prior text selection in the LLM
+        # app survives losing and regaining OS focus as long as the user
+        # didn't click elsewhere meanwhile, so this is safe to do blind.
+        focus_window(self.focus_title, self.log)
         self.pg.hotkey(self._mod(), "c")
         time.sleep(0.4)
         try:
