@@ -163,10 +163,23 @@ class Engine:
 
             return MockBot(log=self.log)
         if cfg.mode == "manual":
+            from . import mcp_config
             from .manual_bot import ManualBot
 
             if self.hooks is None:
                 raise ToolError("Manual mode needs the GUI (or terminal hooks in CLI mode).")
+            # Real, confirmed gap (2026-09-20): every other mode wires the
+            # selected MCP servers into the right config before starting --
+            # manual mode never did, even though it's the one mode that
+            # actually works with the real Claude Desktop app (CDP/DesktopBot
+            # automation of Claude Desktop is a dead end on Windows -- see
+            # DesktopBot; ManualBot drives it via plain OS paste/copy instead,
+            # which doesn't care how the window's tools got enabled).
+            if cfg.site == "claude":
+                policy = self._policy()
+                servers = policy.selected_servers()
+                if servers:
+                    mcp_config.ensure_mcp_servers(servers, log=self.log)
             return ManualBot(
                 hooks=self.hooks,
                 auto_send=cfg.auto_send,
