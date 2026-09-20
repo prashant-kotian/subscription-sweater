@@ -169,7 +169,7 @@
     </div>
     <label class="check"><input type="checkbox" id="inject" checked> append tool instructions to each prompt</label>
     <label class="check"><input type="checkbox" id="directives" checked> honor @@ directives inside the prompt file</label>
-    <label>MCP servers (JSON — auto-connected in Claude desktop mode)</label>
+    <label>MCP servers (JSON — auto-connected for Claude in desktop or manual mode)</label>
     <textarea id="mcpJson" class="mono" rows="3"
       placeholder='{"github": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"]}}'></textarea>
   </div>
@@ -286,7 +286,7 @@ function syncMode() {
     [...siteSel.options].forEach(o => { o.disabled = false; });
     siteSel.value = v;
   }
-  $("siteRow").style.display = (m === "browser" || m === "desktop" || m === "terminal") ? "" : "none";
+  $("siteRow").style.display = (m === "browser" || m === "desktop" || m === "terminal" || m === "manual") ? "" : "none";
   $("desktopRow").style.display = m === "desktop" ? "" : "none";
   $("manualRow").style.display = m === "manual" ? "" : "none";
   $("customUrlRow").style.display = ($("site").value === "custom" && m === "browser") ? "" : "none";
