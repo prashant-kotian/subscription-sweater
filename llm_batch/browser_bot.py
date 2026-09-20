@@ -633,8 +633,26 @@ class PageChatBot:
                         continue
                 self.page.wait_for_timeout(400)
             fc_info.value.set_files(path)
-            self.page.wait_for_timeout(2500)  # let it upload / render in composer
-            self.log(f"  (image attached: {name})")
+            # Wait for the UPLOAD to actually settle, not just the chip to
+            # appear. Real, confirmed issue (2026-09-20, Gemini): after
+            # set_files the image is uploaded asynchronously, and sending
+            # before that upload finished made the message ship as text-only
+            # -- the model then answered "the image is not in the current
+            # message context, please re-upload". networkidle (no more than
+            # two in-flight requests for 500 ms) covers the upload XHR
+            # completing; fall back to a fixed wait if the page never goes
+            # idle (some sites keep a persistent connection open).
+            try:
+                self.page.wait_for_load_state("networkidle", timeout=20000)
+            except Exception:
+                self.page.wait_for_timeout(3000)
+            self.page.wait_for_timeout(400)  # let the chip render
+            if self._composer_has_attachment():
+                self.log(f"  (image attached: {name})")
+            else:
+                self.log(f"  (!) could not confirm '{name}' is attached in the "
+                         "composer (best-effort check) — if the answer says the "
+                         "image is missing, retry this prompt")
             return True
         except Exception as e:  # noqa: BLE001
             self.log(f"  (could not attach image '{name}' — sending the prompt "
@@ -645,17 +663,59 @@ class PageChatBot:
                 pass
             return False
 
+    def _composer_has_attachment(self) -> bool:
+        """Best-effort check that the composer currently shows an attached
+        image (used only to log a warning — never to abort the run). An
+        attached image typically renders as a thumbnail <img>, a chip/
+        preview element, or a populated file input, in the composer area
+        near the bottom of the page."""
+        try:
+            return bool(self.page.evaluate(
+                """() => {
+                    const inComposer = (r) =>
+                        r.width > 15 && r.height > 15 && r.bottom > window.innerHeight * 0.45;
+                    const imgs = Array.from(document.querySelectorAll('img'));
+                    for (const im of imgs) {
+                        const r = im.getBoundingClientRect();
+                        if (inComposer(r)) return true;
+                    }
+                    const chip = document.querySelector(
+                        '[class*="attach"], [class*="upload"], [class*="chip"], ' +
+                        '[class*="thumbnail"], [class*="preview"], [class*="file"]');
+                    if (chip) {
+                        const r = chip.getBoundingClientRect();
+                        if (inComposer(r)) return true;
+                    }
+                    const fi = document.querySelector('input[type="file"]');
+                    if (fi && fi.files && fi.files.length > 0) return true;
+                    return false;
+                }"""
+            ))
+        except Exception:
+            return False
+
     # -- one prompt ------------------------------------------------------------ #
     def answer(self, prompt: str, decision=None) -> str:
         self._new_chat()
+        image_path = ""
         if decision is not None:
-            if decision.image:
-                self.attach_image(decision.image)
+            image_path = decision.image or ""
             self._maybe_apply_web_toggle(decision)
             if decision.target_model:
                 self._select_model(decision.target_model)
             if decision.instructions:
                 prompt = prompt + "\n\n" + "\n".join(decision.instructions)
+        # ATTACH THE IMAGE LAST, immediately before sending.
+        # Real, confirmed issue (2026-09-20, Gemini): the web-search toggle
+        # and the model picker both RE-RENDER the composer. Attaching before
+        # them meant that re-render could silently drop the pending attachment,
+        # so the prompt shipped as text-only and the model answered "the image
+        # is not in the current message context, please re-upload" even though
+        # the tool believed it had attached. Attaching AFTER all composer
+        # interactions makes the attachment the final state of the composer,
+        # so nothing re-renders it away before the send.
+        if image_path:
+            self.attach_image(image_path)
         self._send(prompt)
         return self._wait_for_answer(prompt)
 

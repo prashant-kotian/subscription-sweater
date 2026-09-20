@@ -13,6 +13,7 @@ no real CLI installs needed:
 from __future__ import annotations
 
 import os
+import re
 import sys
 import tempfile
 
@@ -200,6 +201,70 @@ def test_images(tmp: str) -> None:
 
 
 # --------------------------------------------------------------------------- #
+def test_writer_retry(tmp: str) -> None:
+    """Re-running a prompt must REPLACE its entry (txt + xlsx), never stack a
+    duplicate block on top of the old attempts."""
+    out = os.path.join(tmp, "retry.txt")
+    w = writers.make_writer(out, log=lambda m: None)
+    w.add(1, "P-ONE", "first attempt (FAILED)")
+    w.add(2, "P-TWO", "ok two")
+    w.add(1, "P-ONE", "second attempt (final)")   # retry of prompt 1
+    n = w.count()
+    w.close()
+    assert n == 2, f"retry: expected 2 blocks, got {n}"
+    content = open(out, encoding="utf-8").read()
+    assert content.count("PROMPT 1") == 1, content
+    assert "second attempt (final)" in content
+    assert "first attempt (FAILED)" not in content
+    assert "ok two" in content                     # untouched block preserved
+    # order preserved: prompt 1 still before prompt 2
+    assert content.index("PROMPT 1") < content.index("PROMPT 2")
+
+    # a file that ALREADY contains duplicate blocks (from the old append-only
+    # behaviour) collapses to one entry for that index on the next write
+    out2 = os.path.join(tmp, "retry_dup.txt")
+    w2 = writers.TxtWriter(out2, log=lambda m: None)
+    for r in ("attempt A", "attempt B", "attempt C"):
+        w2._append(1, "P", r)                      # legacy behaviour -> 3 copies
+    w2.add(1, "P", "final")
+    n2 = w2.count()
+    w2.close()
+    assert n2 == 1, f"dedupe: expected 1 block, got {n2}"
+    content2 = open(out2, encoding="utf-8").read()
+    assert "final" in content2 and "attempt A" not in content2
+    assert content2.count("PROMPT 1") == 1
+
+    # image-chip artifact lines ("PNG" on its own line, as Gemini's web UI
+    # copies them) are stripped; a sentence merely mentioning PNG survives
+    outc = os.path.join(tmp, "chips.txt")
+    wc = writers.make_writer(outc, log=lambda m: None)
+    wc.add(1, "P", 'Based on the file "chart.png":\nPNG\n(a) 62 mN/m.\nPNG\n'
+                   "Note: this is a PNG image, not a JPG.\n")
+    wc.close()
+    contentc = open(outc, encoding="utf-8").read()
+    assert not re.search(r"(?m)^\s*PNG\s*$", contentc), contentc
+    assert "this is a PNG image, not a JPG" in contentc
+    assert "(a) 62 mN/m." in contentc
+
+    # xlsx: re-running the same prompt ID replaces the row, no duplicate
+    outx = os.path.join(tmp, "retry.xlsx")
+    wx = writers.make_writer(outx, log=lambda m: None)
+    wx.add(1, "P-ONE", "one v1", label="GZ-01")
+    wx.add(2, "P-TWO", "two", label="GZ-02")
+    wx.add(1, "P-ONE", "one v2", label="GZ-01")   # retry of GZ-01
+    nx = wx.count()
+    wx.close()
+    assert nx == 2, f"xlsx retry: expected 2 rows, got {nx}"
+    import openpyxl
+    ws = openpyxl.load_workbook(outx).active
+    vals = [(str(r[0]).strip(), str(r[2]).strip()) for r in ws.iter_rows(min_row=2, values_only=True)]
+    assert ("GZ-01", "one v2") in vals, vals
+    assert ("GZ-01", "one v1") not in vals, vals
+    assert ("GZ-02", "two") in vals, vals
+    print("  writers   : retry replaces entry (txt + xlsx), no duplicates  OK")
+
+
+# --------------------------------------------------------------------------- #
 def test_terminal(tmp: str, txt: str) -> None:
     import json as json_mod
 
@@ -372,6 +437,7 @@ def main() -> int:
     test_policy()
     test_marked(tmp)
     test_images(tmp)
+    test_writer_retry(tmp)
 
     # 2 · reading ----------------------------------------------------------
     txt, xlsx, docx, csv = make_inputs(tmp)

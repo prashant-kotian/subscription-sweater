@@ -1,19 +1,44 @@
 """Write collected answers to .txt / .xlsx / .docx.
 
-The writer appends ONE entry per call and saves the file every time, so a
+Each prompt occupies ONE entry. The file is saved after every entry, so a
 crash, Ctrl+C or "Stop" never loses answers that were already collected.
+
+Re-running a prompt (e.g. retrying a failed one) REPLACES that prompt's
+existing entry in place instead of stacking a duplicate block on top of the
+old attempts -- so the output file always holds exactly one entry per prompt,
+reflecting the latest attempt. (.txt and .xlsx do this; .docx appends.)
 """
 from __future__ import annotations
 
 import os
 import re
 import shutil
+import tempfile
 
 from .errors import InputError
 
 SUPPORTED_OUT_EXTS = {".txt", ".xlsx", ".docx"}
 BAR = "=" * 78
 SEP = "-" * 78
+# Matches a .txt block header: "==...==\nPROMPT <n> [<label>]\n==...=="
+_TXT_HEAD_RE = re.compile(
+    r"^" + re.escape(BAR) + r"\nPROMPT (\d+)(?: \[([^\]]*)\])?\n" + re.escape(BAR) + r"\n",
+    re.MULTILINE,
+)
+
+
+# Inline-image chip artifact: Gemini's web UI renders an image reference
+# inside an answer as a chip whose copied text is just the extension ("PNG"
+# on its own line). Strip such WHOLE lines so the saved answer reads clean.
+_IMAGE_CHIP_RE = re.compile(r"(?im)^\s*(png|jpe?g|webp|gif|bmp|svg)\s*$")
+
+
+def clean_response(text: str) -> str:
+    """Remove image-chip artifact lines from a captured response (all other
+    text -- including words like 'PNG' inside sentences -- is untouched)."""
+    if not text:
+        return text
+    return _IMAGE_CHIP_RE.sub("", text).strip("\n")
 
 
 def make_writer(path: str, log=print):
@@ -42,16 +67,95 @@ class TxtWriter:
         self.log = log
 
     def add(self, index: int, prompt: str, response: str, label: str = "") -> None:
+        response = clean_response(response)
+        blocks = self._parse()
+        if blocks is None:
+            # Could not parse the existing file with confidence -- keep the
+            # old, always-safe append-only behaviour rather than risk data.
+            self._append(index, prompt, response, label)
+            return
+        # Upsert by prompt index: the FIRST block for this index takes the new
+        # content (keeping its position in the file); any stale duplicate
+        # blocks for the same index are dropped, so a file always holds one
+        # entry per prompt.
+        seen = False
+        kept = []
+        for b in blocks:
+            if b[0] == index:
+                if not seen:
+                    kept.append([index, label, prompt, response])
+                    seen = True
+            else:
+                kept.append(b)
+        if not seen:
+            kept.append([index, label, prompt, response])
+        out = []
+        for idx, lab, p, r in kept:
+            head = f"PROMPT {idx}" + (f" [{lab}]" if lab else "")
+            out.append(f"\n{BAR}\n{head}\n{BAR}\n{p}\n\nRESPONSE\n{SEP}\n{r}\n")
+        self._atomic_write("".join(out))
+
+    def _parse(self):
+        """Parse the file into [(index, label, prompt, response), ...] in file
+        order. Returns None if the file cannot be read/parsed with confidence
+        (caller then falls back to append-only)."""
+        if not os.path.exists(self.path):
+            return []
+        try:
+            with open(self.path, "r", encoding="utf-8", errors="replace") as f:
+                text = f.read()
+        except Exception:
+            return None
+        matches = list(_TXT_HEAD_RE.finditer(text))
+        if not matches:
+            return []
+        blocks = []
+        for i, m in enumerate(matches):
+            s = max(0, m.start() - 1)  # include this block's leading newline
+            e = (matches[i + 1].start() - 1) if i + 1 < len(matches) else len(text)
+            body = text[s:e]
+            mb = re.match(
+                r"\n?" + re.escape(BAR) + r"\nPROMPT (\d+)(?: \[([^\]]*)\])?\n"
+                + re.escape(BAR) + r"\n(.*)\Z",
+                body, re.DOTALL,
+            )
+            if not mb:
+                return None
+            rest = mb.group(3)
+            marker = "\n\nRESPONSE\n" + SEP + "\n"
+            if marker not in rest:
+                return None
+            p, r = rest.split(marker, 1)
+            blocks.append([int(mb.group(1)), mb.group(2) or "", p, r.rstrip("\n")])
+        return blocks
+
+    def _append(self, index: int, prompt: str, response: str, label: str = "") -> None:
         head = f"PROMPT {index}" + (f" [{label}]" if label else "")
         with open(self.path, "a", encoding="utf-8") as f:
             f.write(f"\n{BAR}\n{head}\n{BAR}\n{prompt}\n\nRESPONSE\n{SEP}\n{response}\n")
+
+    def _atomic_write(self, content: str) -> None:
+        # write to a temp file then rename, so a crash mid-write can't corrupt
+        # the already-collected answers
+        d = os.path.dirname(os.path.abspath(self.path)) or "."
+        fd, tmp = tempfile.mkstemp(dir=d, prefix=".llmbatch_", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(content)
+            os.replace(tmp, self.path)
+        except Exception:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
 
     def count(self) -> int:
         """How many PROMPT blocks are already in the file (for resume)."""
         if not os.path.exists(self.path):
             return 0
         with open(self.path, "r", encoding="utf-8", errors="replace") as f:
-            return len(re.findall(r"(?m)^PROMPT \d+( \[.+\])?$", f.read()))
+            return len(re.findall(r"(?m)^PROMPT \d+( \[.+?\])?$", f.read()))
 
     def close(self) -> None:
         pass
@@ -109,9 +213,33 @@ class XlsxWriter:
 
     def add(self, index: int, prompt: str, response: str, label: str = "") -> None:
         # column A shows the prompt's own ID when one was captured (e.g. GZ-01)
-        self._ws.append([label or index, prompt, response])
-        for c in self._ws[self._ws.max_row]:
-            c.alignment = self._wrap
+        response = clean_response(response)
+        key = label or index
+        keystr = str(key).strip()
+        # Upsert: replace the first existing row with this key, drop any stale
+        # duplicate rows for it.
+        replaced = False
+        to_remove = []
+        for r in range(2, self._ws.max_row + 1):
+            cell = self._ws.cell(row=r, column=1)
+            if cell.value is None:
+                continue
+            if str(cell.value).strip() == keystr:
+                if not replaced:
+                    cell.value = key
+                    self._ws.cell(row=r, column=2).value = prompt
+                    self._ws.cell(row=r, column=3).value = response
+                    for c in self._ws[r]:
+                        c.alignment = self._wrap
+                    replaced = True
+                else:
+                    to_remove.append(r)
+        for r in reversed(to_remove):
+            self._ws.delete_rows(r, 1)
+        if not replaced:
+            self._ws.append([key, prompt, response])
+            for c in self._ws[self._ws.max_row]:
+                c.alignment = self._wrap
         self._save()
 
     def count(self) -> int:
@@ -129,7 +257,7 @@ class XlsxWriter:
 
 
 # --------------------------------------------------------------------------- #
-# .docx
+# .docx  (append-only: re-running a prompt adds another "Prompt N" section)
 # --------------------------------------------------------------------------- #
 class DocxWriter:
     def __init__(self, path: str, log=print):
@@ -166,6 +294,7 @@ class DocxWriter:
 
     def add(self, index: int, prompt: str, response: str, label: str = "") -> None:
         d = self._doc
+        response = clean_response(response)
         head = f"Prompt {index}" + (f" ({label})" if label else "")
         d.add_heading(head, level=1)
         self._add_block(prompt)
