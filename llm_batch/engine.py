@@ -290,6 +290,7 @@ class Engine:
                     auto = self._resolve_image("", label)
                     if auto:
                         decision.image = auto
+                        self.log(f"  (image auto-attached: {os.path.basename(auto)})")
                 self.log(f"\n[{i}/{total}] {' '.join(decision.clean_prompt.split())[:110]}")
                 self.log(f"  tools: {decision.summary()}")
                 t0 = time.time()
