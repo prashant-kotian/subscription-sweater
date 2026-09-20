@@ -41,7 +41,15 @@ def focus_window(title: str, log=print) -> bool:
                         w.restore()
                 except Exception:
                     pass
-                w.activate()
+                try:
+                    w.activate()
+                except Exception:
+                    # pygetwindow's activate() occasionally raises even when
+                    # the activation SUCCEEDED (the message even says
+                    # "The operation completed successfully") -- best-effort
+                    # either way; the step buttons tell the user to make sure
+                    # the app window is focused.
+                    pass
                 time.sleep(0.6)
                 return True
             log(f"  (auto-focus: no window with title containing '{title}')")
