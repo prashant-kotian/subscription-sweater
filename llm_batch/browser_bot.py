@@ -401,6 +401,23 @@ class PageChatBot:
                     return
             except Exception:
                 continue
+        # Real, confirmed issue (2026-09-21): on a long-running session the
+        # "New chat" click can silently stop landing (site-side DOM/layout
+        # shift after many conversations pile up in the sidebar -- exact
+        # cause not pinned down) with every configured selector still
+        # matching something, just not the right thing anymore. Continuing
+        # in the same conversation is a real reproducibility problem (later
+        # answers can be contaminated by earlier context), so fall back to a
+        # hard page.goto() of the site's own base URL -- a real navigation
+        # that can't land in the wrong place, unlike one more click attempt.
+        try:
+            self.page.goto(self.cfg["url"], wait_until="domcontentloaded", timeout=30000)
+            self.page.wait_for_timeout(2000)
+            if self._wait_input(8000):
+                self.log("  (new-chat click failed — recovered via direct page reload)")
+                return
+        except Exception:
+            pass
         self.log("  (could not start a new chat — continuing in the current conversation)")
 
     # -- tool policy (web-search toggle, best effort) -------------------------- #
